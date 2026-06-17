@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.vite/
+
+# Rust / Tauri build output (companion)
+target/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local database (keep the data/ dir via .gitkeep)
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+
+# Test / tooling output
+coverage/
+*.local
+
+# Editor / agent local state
+.superpowers/
+.claude/settings.local.json
+.claude/*.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+.claude/launch.json
+/companion/src-tauri/target-codex
+/docs/superpowers
