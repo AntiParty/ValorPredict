@@ -1,124 +1,103 @@
-# Valorant Auto Predictions Companion
+# ValorPredict
 
-A Windows-first Tauri desktop companion for the Valorant Auto Predictions backend.
+Free Windows desktop app that automatically opens **Twitch Channel Points
+Predictions** when your Valorant match starts — and resolves them from the
+match result when it ends. Everything runs locally on your PC: Twitch OAuth,
+the prediction lifecycle, and the SQLite store live inside the app. There is
+no hosted service, no account, and no fee.
 
-The app works without Valorant through development-only simulation controls.
-Production builds present a small status and setup surface. When Valorant and
-Riot Client are available, it can inspect read-only local Riot state and send
-sanitized state changes to the backend.
+> ValorPredict isn't endorsed by Riot Games and doesn't reflect the views or
+> opinions of Riot Games or anyone officially involved in producing or managing
+> Riot Games properties.
 
-## What It Does
+## Install
 
-- Stores the backend URL and local companion API key on this PC.
-- Tests the backend connection with `/api/local/ping`.
-- Simulates Competitive, Custom, and pre-game events.
-- Detects Riot Client and Valorant process presence.
-- Reads the Riot lockfile locally.
-- Calls read-only local Riot session endpoints.
-- Calls read-only pre-game and current-game player-state endpoints.
-- Reads match details to normalize only Competitive and Custom modes.
-- Hashes MatchIDs before they enter status, logs, or backend requests.
-- Deduplicates match events and applies a ten-minute current-game cooldown.
-- Remembers whether monitoring was enabled across launches.
-- Hides to the Windows system tray when the window is closed.
+Download the latest installer from
+[GitHub Releases](https://github.com/AntiParty/ValorPredict/releases) and run it.
 
-## What It Does Not Do
+The installer is not code-signed, so Windows SmartScreen may warn on first
+run — choose **More info → Run anyway**. If you'd rather not trust a binary,
+build from source (below); it's the same code.
 
-- Read Valorant memory.
-- Inject into Valorant or hook game functions.
-- Sniff network packets.
-- Bypass Vanguard.
+## Set up (one time, ~3 minutes)
+
+Each streamer registers their **own** Twitch application, so your credentials
+never touch anyone else's server:
+
+1. Sign in to the [Twitch Developer Console](https://dev.twitch.tv/console/apps)
+   and choose **Register Your Application**.
+2. Name it anything (e.g. `ValorPredict`), set the OAuth Redirect URL exactly to:
+
+   ```text
+   http://localhost:3000/auth/twitch/callback
+   ```
+
+3. Create the app, then copy the **Client ID** and generate a **Client Secret**.
+4. Launch ValorPredict and paste both into the setup screen, then click
+   **Connect Twitch** — a browser opens for the usual Twitch authorization.
+
+The app requests only the `channel:manage:predictions` and
+`channel:read:predictions` scopes. Your account must be eligible for Channel
+Points Predictions (affiliate or partner).
+
+## Use
+
+1. Enable and customize the **Competitive** and/or **Custom** preset (title,
+   outcomes, prediction window).
+2. Click **Start monitoring**.
+3. Queue into Valorant. When a supported match goes live, a prediction opens
+   automatically; when the match ends, it resolves to the winning outcome.
+   If the result can't be read, the prediction stays open for manual resolution.
+
+Closing the window hides the app to the system tray — detection keeps running.
+**Quit** lives in the tray menu. **Send test prediction** opens a real
+prediction from your preset so you can verify the pipeline anytime.
+
+Unrated, swiftplay, deathmatch, and anything else the detector can't positively
+identify normalize to `unknown` and are ignored.
+
+## What it does NOT do
+
+- Read Valorant memory, inject into the game, or hook functions.
+- Sniff network packets or bypass Vanguard.
 - Automate gameplay, agent selection, chat, or match actions.
-- Send Riot tokens, lockfile passwords, raw MatchIDs, or screenshots to the backend.
-- Perform Twitch OAuth. Twitch remains owned by the web backend.
+- Send your Riot tokens, lockfile password, raw MatchIDs, or Twitch
+  credentials anywhere. There is no telemetry.
 
-## Safety And Privacy
+Detection is read-only: the app reads the local Riot Client lockfile and calls
+the same local HTTP endpoints the client itself exposes. The lockfile password,
+Riot tokens, and raw MatchIDs never leave the Rust process; MatchIDs are
+SHA-256 hashed before they appear in status or logs.
 
-The Riot lockfile password, Riot authorization token, entitlement token, full local API key, and raw MatchID stay inside the Rust process.
+## Build from source
 
-The backend receives only:
-
-- state;
-- normalized game mode (`competitive`, `custom`, or `unknown`);
-- confidence;
-- SHA-256 MatchID hash;
-- region and shard;
-- non-sensitive evidence labels.
-
-Local Riot Client requests are restricted to `127.0.0.1`. Riot GLZ requests keep normal TLS certificate validation enabled.
-
-## Run
-
-Prerequisites:
-
-- Node.js
-- Rust stable MSVC toolchain
-- Microsoft WebView2
-- Windows C++ build tools required by Tauri
+Prerequisites: Node.js 20+, Rust stable (MSVC), Microsoft WebView2, and the
+Windows C++ build tools required by Tauri.
 
 ```powershell
 cd companion
 npm install
-npm run tauri dev
+npm run tauri dev     # run in development (adds simulation + telemetry panels)
+npm run tauri build   # produce the release installer (src-tauri/target/release/bundle/nsis)
 ```
 
-Development mode includes simulation buttons, detector telemetry, cooldown
-controls, and sanitized logs.
-
-## Build
+Verification:
 
 ```powershell
 cd companion
-npm run tauri build
-```
-
-The compiled app omits development diagnostics. Closing its window always hides
-it to the system tray; **Quit** is available only from the tray menu.
-
-## Connect To The Backend
-
-1. Start the backend from the repository root with `npm run dev`.
-2. Open the web dashboard.
-3. Connect Twitch and enable the Competitive and/or Custom preset.
-4. Generate a Local API Key in the **Local Companion App** card.
-5. Open this companion.
-6. Enter `http://localhost:3000` and paste the key.
-7. Save settings.
-8. Click **Test Connection**.
-
-## Test Without Valorant In Development
-
-1. Complete the backend connection steps.
-2. Run the companion with `npm run tauri dev`.
-3. Click **Simulate Pre-Game** to send a state-only event.
-4. Click **Simulate Competitive** or **Simulate Custom**.
-5. Confirm the backend creates a Twitch prediction.
-6. Resolve or cancel the prediction from the web dashboard before repeating.
-
-Simulation and real detection use the same Rust backend client.
-
-## Test With Valorant
-
-1. Start Riot Client and Valorant.
-2. Click **Start Monitoring**.
-3. Queue into a game.
-4. Check for `pre_game` during agent select.
-5. Check for `current_game` after loading into the match.
-6. Confirm the detected mode is Competitive, Custom, or Unknown.
-7. Confirm logs show only a short MatchID hash prefix.
-
-Only Competitive and Custom can trigger predictions. Unrated, alternate queues,
-missing mode data, and unfamiliar Riot values normalize to Unknown and are
-ignored by the backend.
-
-If Riot changes a local endpoint, update the centralized paths and JSON extraction in `src-tauri/src/riot_local_client.rs`.
-
-## Verification
-
-```powershell
-cd companion
-npm run build
+npm run build         # type-check + bundle the UI
 cd src-tauri
-cargo test
-cargo check
+cargo test            # vap_core + companion tests
 ```
+
+## Architecture
+
+- `core/` — `vap_core`: Tauri-independent Twitch OAuth, SQLite store, and
+  prediction lifecycle. Also ships a standalone `bin/server.rs` for the
+  optional legacy browser dashboard.
+- `src-tauri/` — the desktop shell: read-only Riot detection loop, tray, and
+  IPC commands that surface `vap_core` to the UI.
+- `src/` — React UI: onboarding wizard, prediction presets, monitoring.
+
+If Riot changes a local endpoint, update the centralized paths and JSON
+extraction in `src-tauri/src/riot_local_client.rs`.

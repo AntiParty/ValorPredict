@@ -1,0 +1,166 @@
+import { useCallback, useEffect, useState } from "react";
+
+import { companionApi } from "../../api";
+import { useWindowVisible } from "../../hooks/useWindowVisible";
+import type {
+  DashboardData,
+  PresetGameMode,
+  PresetInput,
+  SettingsView,
+} from "../../types";
+import { ActivePrediction } from "./ActivePrediction";
+import { EventsCard } from "./EventsCard";
+import { PresetCard } from "./PresetCard";
+
+type Notice = { kind: "success" | "error"; message: string } | null;
+
+export function PredictionsDashboard() {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const [pollInterval, setPollInterval] = useState(15);
+  const windowVisible = useWindowVisible();
+
+  const refresh = useCallback(async () => {
+    try {
+      setData(await companionApi.getDashboard());
+    } catch (error) {
+      setNotice({ kind: "error", message: String(error) });
+    }
+  }, []);
+
+  useEffect(() => {
+    companionApi
+      .loadSettings()
+      .then((settings: SettingsView) => setPollInterval(settings.pollIntervalSeconds))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    // Pause polling while hidden to the tray; resume on show.
+    if (!windowVisible) return;
+    refresh().catch(() => undefined);
+    // Presets and events change rarely, so poll gently to stay light.
+    const timer = window.setInterval(() => refresh().catch(() => undefined), 8000);
+    return () => window.clearInterval(timer);
+  }, [refresh, windowVisible]);
+
+  const run = useCallback(
+    async (operation: () => Promise<{ message?: string }>, fallback: string) => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        const result = await operation();
+        setNotice({ kind: "success", message: result?.message ?? fallback });
+        await refresh();
+      } catch (error) {
+        setNotice({ kind: "error", message: String(error) });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
+  if (!data) {
+    return (
+      <section className="predictions-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Prediction presets</h2>
+          </div>
+        </div>
+        <p className="muted-line">Loading your presets…</p>
+      </section>
+    );
+  }
+
+  const competitive = data.presets.find((preset) => preset.game_mode === "competitive");
+  const custom = data.presets.find((preset) => preset.game_mode === "custom");
+  const enabledCount = data.presets.filter((preset) => preset.enabled).length;
+
+  const savePreset = (gameMode: PresetGameMode, input: PresetInput) =>
+    run(async () => {
+      await companionApi.savePreset(gameMode, input);
+      return { message: `${gameMode === "competitive" ? "Competitive" : "Custom"} preset saved.` };
+    }, "Preset saved.");
+
+  const savePoll = (value: number) => {
+    setPollInterval(value);
+    run(async () => {
+      await companionApi.saveSettings(value);
+      return { message: "Settings saved." };
+    }, "Settings saved.");
+  };
+
+  return (
+    <section className="predictions-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Prediction presets</h2>
+        </div>
+        <span className="quiet-pill">{enabledCount}/2 enabled</span>
+      </div>
+
+      {notice && <div className={`pred-notice ${notice.kind}`}>{notice.message}</div>}
+
+      <div className="preset-list">
+        {competitive && (
+          <PresetCard
+            preset={competitive}
+            busy={busy}
+            onSave={(input) => savePreset("competitive", input)}
+          />
+        )}
+        {custom && (
+          <PresetCard preset={custom} busy={busy} onSave={(input) => savePreset("custom", input)} />
+        )}
+      </div>
+
+      <div className="test-row">
+        <button
+          className="button primary"
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            run(() => companionApi.simulateMatchStart("competitive"), "Test prediction sent.")
+          }
+        >
+          Send test prediction
+        </button>
+        <small>
+          Opens a real prediction from your Competitive preset so you can confirm
+          everything works — cancel it below anytime.
+        </small>
+      </div>
+
+      <ActivePrediction
+        activeSession={data.activeSession}
+        busy={busy}
+        onResolve={(winner) => run(() => companionApi.resolvePrediction(winner), "Prediction resolved.")}
+        onCancel={() => run(() => companionApi.cancelPrediction(), "Prediction cancelled.")}
+      />
+
+      <EventsCard events={data.events} />
+
+      <details className="settings-disclosure">
+        <summary>Settings</summary>
+        <label className="poll-setting">
+          <span>Detection polling — higher is lighter on your PC</span>
+          <div className="range-row">
+            <input
+              type="range"
+              min={10}
+              max={60}
+              step={5}
+              value={pollInterval}
+              disabled={busy}
+              onChange={(event) => savePoll(Number(event.target.value))}
+            />
+            <strong>{pollInterval}s</strong>
+          </div>
+        </label>
+      </details>
+    </section>
+  );
+}

@@ -11,8 +11,6 @@ pub fn clamp_poll_interval(seconds: u64) -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub backend_url: String,
-    pub local_api_key: String,
     pub poll_interval_seconds: u64,
     #[serde(default)]
     pub monitoring_enabled: bool,
@@ -21,9 +19,6 @@ pub struct AppSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsView {
-    pub backend_url: String,
-    pub local_api_key_masked: String,
-    pub has_local_api_key: bool,
     pub poll_interval_seconds: u64,
     pub monitoring_enabled: bool,
 }
@@ -31,9 +26,6 @@ pub struct SettingsView {
 impl From<&AppSettings> for SettingsView {
     fn from(settings: &AppSettings) -> Self {
         Self {
-            backend_url: settings.backend_url.clone(),
-            local_api_key_masked: settings.masked_api_key(),
-            has_local_api_key: !settings.local_api_key.is_empty(),
             poll_interval_seconds: settings.poll_interval_seconds,
             monitoring_enabled: settings.monitoring_enabled,
         }
@@ -43,28 +35,9 @@ impl From<&AppSettings> for SettingsView {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            backend_url: "http://localhost:3000".into(),
-            local_api_key: String::new(),
             poll_interval_seconds: DEFAULT_POLL_INTERVAL_SECONDS,
             monitoring_enabled: false,
         }
-    }
-}
-
-impl AppSettings {
-    pub fn masked_api_key(&self) -> String {
-        if self.local_api_key.is_empty() {
-            return String::new();
-        }
-        let prefix = if self.local_api_key.starts_with("vap_") {
-            "vap_"
-        } else {
-            ""
-        };
-        format!(
-            "{prefix}{}",
-            "•".repeat(self.local_api_key.len() - prefix.len())
-        )
     }
 }
 
@@ -89,27 +62,6 @@ pub enum ValorantGameMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct BackendEventDetails {
-    pub detection_method: String,
-    pub region: String,
-    pub shard: String,
-    pub evidence: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct BackendEventPayload {
-    pub source: String,
-    pub state: ValorantLocalState,
-    pub game_mode: ValorantGameMode,
-    pub confidence: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub match_id_hash: Option<String>,
-    pub details: BackendEventDetails,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct BackendResponse {
     pub ok: bool,
     pub action: String,
@@ -127,7 +79,6 @@ pub struct LogEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ValorantDetectionStatus {
-    pub backend_connected: bool,
     pub riot_lockfile_found: bool,
     pub riot_client_running: bool,
     pub valorant_running: bool,
@@ -140,15 +91,12 @@ pub struct ValorantDetectionStatus {
     pub cooldown_remaining_seconds: u64,
     pub last_backend_response: String,
     pub monitoring: bool,
-    pub duo_enabled: bool,
-    pub duo_status: String,
     pub logs: Vec<LogEntry>,
 }
 
 impl Default for ValorantDetectionStatus {
     fn default() -> Self {
         Self {
-            backend_connected: false,
             riot_lockfile_found: false,
             riot_client_running: false,
             valorant_running: false,
@@ -159,10 +107,8 @@ impl Default for ValorantDetectionStatus {
             confidence: 0.0,
             last_match_id_hash: None,
             cooldown_remaining_seconds: 0,
-            last_backend_response: "No backend request yet.".into(),
+            last_backend_response: "No prediction activity yet.".into(),
             monitoring: false,
-            duo_enabled: false,
-            duo_status: "Duo command inactive.".into(),
             logs: Vec::new(),
         }
     }

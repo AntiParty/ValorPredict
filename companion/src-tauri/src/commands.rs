@@ -1,45 +1,62 @@
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, RwLock,
     },
     time::Instant,
 };
 
 use chrono::Utc;
 use parking_lot::Mutex;
-use sha2::{Digest, Sha256};
 use tauri::State;
 
+use vap_core::db::Db;
+use vap_core::predictions::Winner;
+
 use crate::{
-    backend_client::BackendClient,
     models::{
-        clamp_poll_interval, AppSettings, BackendEventDetails, BackendEventPayload,
-        BackendResponse, LogEntry, SettingsView, ValorantDetectionStatus, ValorantGameMode,
-        ValorantLocalState,
+        clamp_poll_interval, AppSettings, BackendResponse, LogEntry, SettingsView,
+        ValorantDetectionStatus, ValorantGameMode, ValorantLocalState,
     },
-    riot_local_client::DuoParty,
+    predictions::{restore_runtime, PredictionRuntime},
     settings::SettingsStore,
-    valorant_detector::{detect_current_party, detect_once, DetectionDecision, DetectorMemory},
+    valorant_detector::{detect_once, fetch_match_won, DetectionDecision, DetectorMemory},
 };
+
+/// A match we opened a prediction for and are waiting to auto-resolve once it
+/// ends. `attempts` bounds how long we keep retrying the result lookup.
+struct ActiveMatch {
+    match_id: String,
+    game_mode: ValorantGameMode,
+    attempts: u32,
+}
+
+/// ~30 polls of grace for Riot to publish the finished-match result before we
+/// give up and ask the streamer to resolve manually.
+const MAX_RESOLVE_ATTEMPTS: u32 = 30;
 
 pub struct AppRuntimeState {
     pub settings: Arc<Mutex<AppSettings>>,
     pub status: Arc<Mutex<ValorantDetectionStatus>>,
     pub settings_store: SettingsStore,
-    pub backend: BackendClient,
     pub monitoring: Arc<AtomicBool>,
+    /// Local SQLite-backed prediction store (replaces the remote backend).
+    pub db: Arc<Db>,
+    /// Twitch client + prediction service, present once credentials are saved.
+    pub predictions: Arc<RwLock<Option<PredictionRuntime>>>,
 }
 
 impl AppRuntimeState {
-    pub fn new(settings_store: SettingsStore) -> Self {
+    pub fn new(settings_store: SettingsStore, db: Arc<Db>) -> Self {
         let settings = settings_store.load().unwrap_or_default();
+        let predictions = restore_runtime(&db);
         Self {
             settings: Arc::new(Mutex::new(settings)),
             status: Arc::new(Mutex::new(ValorantDetectionStatus::default())),
             settings_store,
-            backend: BackendClient::default(),
             monitoring: Arc::new(AtomicBool::new(false)),
+            db,
+            predictions: Arc::new(RwLock::new(predictions)),
         }
     }
 }
@@ -52,50 +69,13 @@ pub fn load_settings(state: State<'_, AppRuntimeState>) -> SettingsView {
 #[tauri::command]
 pub fn save_settings(
     state: State<'_, AppRuntimeState>,
-    backend_url: String,
-    local_api_key: String,
     poll_interval_seconds: u64,
 ) -> Result<SettingsView, String> {
     let mut current = state.settings.lock();
-    current.backend_url = backend_url.trim().trim_end_matches('/').to_string();
-    if !local_api_key.trim().is_empty() {
-        current.local_api_key = local_api_key.trim().to_string();
-    }
     current.poll_interval_seconds = clamp_poll_interval(poll_interval_seconds);
     state.settings_store.save(&current)?;
-    push_log(
-        &state.status,
-        "info",
-        "Settings saved. The local API key remains masked.",
-    );
+    push_log(&state.status, "info", "Settings saved.");
     Ok(SettingsView::from(&*current))
-}
-
-#[tauri::command]
-pub async fn test_backend_connection(
-    state: State<'_, AppRuntimeState>,
-) -> Result<BackendResponse, String> {
-    let settings = state.settings.lock().clone();
-    match state.backend.ping(&settings).await {
-        Ok(outcome) => {
-            let mut status = state.status.lock();
-            status.backend_connected = outcome.ok;
-            status.duo_enabled = outcome.duo_enabled;
-            status.last_backend_response = outcome.message.clone();
-            drop(status);
-            push_log(&state.status, "success", &outcome.message);
-            Ok(BackendResponse {
-                ok: outcome.ok,
-                action: "connected".into(),
-                message: outcome.message,
-            })
-        }
-        Err(error) => {
-            state.status.lock().backend_connected = false;
-            push_log(&state.status, "error", &error);
-            Err(error)
-        }
-    }
 }
 
 #[tauri::command]
@@ -108,7 +88,9 @@ pub fn get_status(state: State<'_, AppRuntimeState>) -> ValorantDetectionStatus 
 }
 
 pub fn should_auto_start_monitoring(settings: &AppSettings) -> bool {
-    settings.monitoring_enabled && !settings.local_api_key.trim().is_empty()
+    // Local mode: the monitoring loop itself guards on a connected Twitch
+    // account, so the only stored preference we need is "was it running?".
+    settings.monitoring_enabled
 }
 
 #[tauri::command]
@@ -125,14 +107,16 @@ pub fn begin_monitoring(state: &AppRuntimeState) -> ValorantDetectionStatus {
     push_log(
         &state.status,
         "info",
-        "Read-only Riot monitoring started. Simulation controls remain available.",
+        "Read-only Riot monitoring started. Predictions run locally on this PC.",
     );
     let settings = state.settings.clone();
     let status = state.status.clone();
-    let backend = state.backend.clone();
+    let db = state.db.clone();
+    let predictions = state.predictions.clone();
     let monitoring = state.monitoring.clone();
     tauri::async_runtime::spawn(async move {
         let mut memory = DetectorMemory::default();
+        let mut active_match: Option<ActiveMatch> = None;
         while monitoring.load(Ordering::SeqCst) {
             let poll_interval = clamp_poll_interval(settings.lock().poll_interval_seconds);
             match detect_once().await {
@@ -149,42 +133,37 @@ pub fn begin_monitoring(state: &AppRuntimeState) -> ValorantDetectionStatus {
                         current.confidence = snapshot.confidence;
                         current.last_match_id_hash = snapshot.match_id_hash.clone();
                     }
-                    if let DetectionDecision::Send(snapshot) =
+
+                    // A match we opened a prediction for has ended -> resolve it
+                    // from the result. Uses the raw poll state, not the deduped
+                    // decision, so we react as soon as the game is no longer live.
+                    if active_match.is_some()
+                        && snapshot.state != ValorantLocalState::CurrentGame
+                    {
+                        try_auto_resolve(&db, &predictions, &status, &mut active_match).await;
+                    }
+
+                    if let DetectionDecision::Send(decided) =
                         memory.evaluate(&snapshot, Instant::now())
                     {
-                        let current_settings = settings.lock().clone();
-                        if current_settings.local_api_key.is_empty() {
-                            push_log(
+                        // The only locally-actionable transition is a match
+                        // going live; other state changes just refresh the UI.
+                        if decided.state == ValorantLocalState::CurrentGame {
+                            let created = trigger_local_prediction(
+                                &db,
+                                &predictions,
                                 &status,
-                                "warn",
-                                "State changed, but no local API key is configured.",
-                            );
-                        } else {
-                            match backend
-                                .send_state(&current_settings, &snapshot.to_payload())
-                                .await
-                            {
-                                Ok(response) => {
-                                    let mut current = status.lock();
-                                    current.backend_connected = true;
-                                    current.last_backend_response = response.message.clone();
-                                    if snapshot.state == ValorantLocalState::CurrentGame {
-                                        current.cooldown_remaining_seconds = 600;
-                                    }
-                                    drop(current);
-                                    push_log(
-                                        &status,
-                                        "success",
-                                        &format!(
-                                            "State {} sent: {}",
-                                            state_label(&snapshot.state),
-                                            response.message
-                                        ),
-                                    );
-                                }
-                                Err(error) => {
-                                    status.lock().last_backend_response = error.clone();
-                                    push_log(&status, "error", &error);
+                                &decided.game_mode,
+                            )
+                            .await;
+                            status.lock().cooldown_remaining_seconds = 600;
+                            if created {
+                                if let Some(match_id) = decided.match_id_raw.clone() {
+                                    active_match = Some(ActiveMatch {
+                                        match_id,
+                                        game_mode: decided.game_mode.clone(),
+                                        attempts: 0,
+                                    });
                                 }
                             }
                         }
@@ -194,7 +173,6 @@ pub fn begin_monitoring(state: &AppRuntimeState) -> ValorantDetectionStatus {
                     push_log(&status, "error", &error);
                 }
             }
-            refresh_duo_publication(&settings, &status, &backend).await;
             tokio::time::sleep(std::time::Duration::from_secs(poll_interval)).await;
         }
         status.lock().monitoring = false;
@@ -227,111 +205,243 @@ fn set_monitoring_preference(state: &AppRuntimeState, enabled: bool) {
     }
 }
 
-async fn refresh_duo_publication(
-    settings: &Arc<Mutex<AppSettings>>,
+/// Turn a detected (or simulated) match start into a local Twitch prediction.
+/// Returns `true` when a new prediction was actually opened.
+async fn trigger_local_prediction(
+    db: &Arc<Db>,
+    predictions: &Arc<RwLock<Option<PredictionRuntime>>>,
     status: &Arc<Mutex<ValorantDetectionStatus>>,
-    backend: &BackendClient,
-) {
-    let current_settings = settings.lock().clone();
-    if current_settings.local_api_key.is_empty() {
-        return;
-    }
-
-    let outcome = match backend.ping(&current_settings).await {
-        Ok(outcome) => outcome,
+    game_mode: &ValorantGameMode,
+) -> bool {
+    let runtime = { predictions.read().unwrap().clone() };
+    let Some(runtime) = runtime else {
+        push_log(
+            status,
+            "warn",
+            "Match detected, but Twitch credentials are not set up yet.",
+        );
+        return false;
+    };
+    let user = match db.get_user() {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            push_log(
+                status,
+                "warn",
+                "Match detected, but no Twitch account is connected.",
+            );
+            return false;
+        }
         Err(error) => {
-            status.lock().backend_connected = false;
-            push_log(status, "error", &error);
-            return;
+            push_log(status, "error", &format!("Database error: {error}"));
+            return false;
         }
     };
-    {
-        let mut current = status.lock();
-        current.backend_connected = outcome.ok;
-        current.duo_enabled = outcome.duo_enabled;
-        if !outcome.duo_enabled {
-            current.duo_status = "Duo command is off.".into();
-        }
-    }
-    if !outcome.duo_enabled {
-        return;
-    }
 
-    match detect_current_party().await {
-        Ok(party) => {
-            let summary = duo_status_summary(&party);
-            match backend.upload_duo(&current_settings, &party).await {
-                Ok(response) => {
-                    let mut current = status.lock();
-                    current.backend_connected = true;
-                    current.duo_status = summary;
-                    current.last_backend_response = response.message.clone();
-                    drop(current);
-                    push_log(status, "info", &format!("Duo command: {}", response.message));
-                }
-                Err(error) => {
-                    status.lock().duo_status = "Duo upload failed.".into();
-                    push_log(status, "error", &error);
-                }
-            }
+    let mode = game_mode_label(game_mode);
+    match runtime
+        .service
+        .handle_match_start(&user.twitch_user_id, "companion_detection", mode)
+        .await
+    {
+        Ok(result) => {
+            status.lock().last_backend_response = result.message.clone();
+            let created = result.action == "prediction_created";
+            push_log(status, if created { "success" } else { "info" }, &result.message);
+            created
         }
         Err(error) => {
-            status.lock().duo_status = "Could not read your Valorant party.".into();
-            push_log(status, "warn", &error);
+            let message = error.to_string();
+            status.lock().last_backend_response = message.clone();
+            push_log(status, "error", &message);
+            false
         }
     }
 }
 
-fn duo_status_summary(party: &DuoParty) -> String {
-    if !party.in_party || party.members.is_empty() {
-        return "On · not queued with anyone right now.".into();
+/// When a tracked match ends, read the result and resolve the open prediction to
+/// the winning outcome (per the preset's `win_outcome`). On any uncertainty we
+/// leave the prediction open for manual resolution rather than risk a wrong call.
+async fn try_auto_resolve(
+    db: &Arc<Db>,
+    predictions: &Arc<RwLock<Option<PredictionRuntime>>>,
+    status: &Arc<Mutex<ValorantDetectionStatus>>,
+    active_match: &mut Option<ActiveMatch>,
+) {
+    // Copy what we need so we don't hold a borrow of `active_match` across await.
+    let (match_id, game_mode) = match active_match.as_ref() {
+        Some(am) => (am.match_id.clone(), am.game_mode.clone()),
+        None => return,
+    };
+
+    let Some(user) = db.get_user().ok().flatten() else {
+        *active_match = None;
+        return;
+    };
+
+    // If the prediction was already resolved/cancelled (e.g. manually), stop.
+    let still_open = matches!(
+        db.get_active_session(&user.twitch_user_id).ok().flatten().as_ref(),
+        Some(session) if session.status == "prediction_open"
+    );
+    if !still_open {
+        *active_match = None;
+        return;
     }
-    let names = party
-        .members
-        .iter()
-        .map(|member| member.name.clone())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("On · queued with {names}")
+
+    let Some(runtime) = predictions.read().unwrap().clone() else {
+        *active_match = None;
+        return;
+    };
+
+    match fetch_match_won(&match_id).await {
+        Ok(Some(won)) => {
+            let win_outcome = db
+                .get_preset(&user.twitch_user_id, game_mode_label(&game_mode))
+                .ok()
+                .flatten()
+                .map(|preset| preset.win_outcome)
+                .unwrap_or_else(|| "A".to_string());
+            // win_outcome marks the "win" side; flip it on a loss.
+            let winner = match (win_outcome.as_str(), won) {
+                ("B", true) => Winner::B,
+                ("B", false) => Winner::A,
+                (_, true) => Winner::A,
+                (_, false) => Winner::B,
+            };
+            match runtime.service.resolve(&user.twitch_user_id, winner).await {
+                Ok(_) => push_log(
+                    status,
+                    "success",
+                    if won {
+                        "Match ended in a win — prediction auto-resolved."
+                    } else {
+                        "Match ended in a loss — prediction auto-resolved."
+                    },
+                ),
+                Err(error) => push_log(
+                    status,
+                    "error",
+                    &format!(
+                        "Auto-resolve failed: {error}. Resolve it manually from the dashboard."
+                    ),
+                ),
+            }
+            *active_match = None;
+        }
+        Ok(None) => bump_resolve_attempt(
+            active_match,
+            status,
+            "Couldn't read the match result yet — will keep trying. You can also resolve manually.",
+        ),
+        Err(error) => bump_resolve_attempt(
+            active_match,
+            status,
+            &format!("Couldn't read the match result ({error}). You can resolve manually."),
+        ),
+    }
+}
+
+/// Count a failed result lookup; after `MAX_RESOLVE_ATTEMPTS`, give up and leave
+/// the prediction for manual resolution.
+fn bump_resolve_attempt(
+    active_match: &mut Option<ActiveMatch>,
+    status: &Arc<Mutex<ValorantDetectionStatus>>,
+    give_up_message: &str,
+) {
+    let exhausted = match active_match.as_mut() {
+        Some(am) => {
+            am.attempts += 1;
+            am.attempts >= MAX_RESOLVE_ATTEMPTS
+        }
+        None => false,
+    };
+    if exhausted {
+        push_log(status, "warn", give_up_message);
+        *active_match = None;
+    }
 }
 
 #[tauri::command]
-pub async fn simulate_pregame(
-    state: State<'_, AppRuntimeState>,
-) -> Result<BackendResponse, String> {
-    send_simulation(
-        &state,
-        ValorantLocalState::PreGame,
-        ValorantGameMode::Unknown,
-        0.85,
-    )
-    .await
+pub async fn simulate_pregame(state: State<'_, AppRuntimeState>) -> Result<BackendResponse, String> {
+    {
+        let mut status = state.status.lock();
+        status.local_state = ValorantLocalState::PreGame;
+        status.game_mode = ValorantGameMode::Unknown;
+        status.confidence = 0.85;
+    }
+    push_log(
+        &state.status,
+        "info",
+        "Simulated pre-game state (predictions only start once a match is live).",
+    );
+    Ok(BackendResponse {
+        ok: true,
+        action: "ignored".into(),
+        message: "Pre-game simulated. Predictions start when a match goes live.".into(),
+    })
 }
 
 #[tauri::command]
 pub async fn simulate_competitive_current_game(
     state: State<'_, AppRuntimeState>,
 ) -> Result<BackendResponse, String> {
-    send_simulation(
-        &state,
-        ValorantLocalState::CurrentGame,
-        ValorantGameMode::Competitive,
-        0.95,
-    )
-    .await
+    run_local_simulation(&state, ValorantGameMode::Competitive).await
 }
 
 #[tauri::command]
 pub async fn simulate_custom_current_game(
     state: State<'_, AppRuntimeState>,
 ) -> Result<BackendResponse, String> {
-    send_simulation(
-        &state,
-        ValorantLocalState::CurrentGame,
-        ValorantGameMode::Custom,
-        0.95,
-    )
-    .await
+    run_local_simulation(&state, ValorantGameMode::Custom).await
+}
+
+async fn run_local_simulation(
+    state: &State<'_, AppRuntimeState>,
+    game_mode: ValorantGameMode,
+) -> Result<BackendResponse, String> {
+    let user = state
+        .db
+        .get_user()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Connect your Twitch account first.".to_string())?;
+    let runtime = crate::predictions::current_runtime(state)?;
+    let mode = game_mode_label(&game_mode);
+    push_log(&state.status, "info", &format!("Simulating a {mode} match start…"));
+
+    match runtime
+        .service
+        .handle_match_start(&user.twitch_user_id, "manual", mode)
+        .await
+    {
+        Ok(result) => {
+            {
+                let mut status = state.status.lock();
+                status.local_state = ValorantLocalState::CurrentGame;
+                status.game_mode = game_mode;
+                status.confidence = 0.95;
+                status.last_backend_response = result.message.clone();
+                status.cooldown_remaining_seconds = 600;
+            }
+            let level = if result.action == "prediction_created" {
+                "success"
+            } else {
+                "info"
+            };
+            push_log(&state.status, level, &result.message);
+            Ok(BackendResponse {
+                ok: true,
+                action: result.action.into(),
+                message: result.message,
+            })
+        }
+        Err(error) => {
+            let message = error.to_string();
+            state.status.lock().last_backend_response = message.clone();
+            push_log(&state.status, "error", &message);
+            Err(message)
+        }
+    }
 }
 
 #[tauri::command]
@@ -345,85 +455,6 @@ pub fn reset_cooldown(state: State<'_, AppRuntimeState>) -> ValorantDetectionSta
 pub fn clear_logs(state: State<'_, AppRuntimeState>) -> ValorantDetectionStatus {
     state.status.lock().logs.clear();
     state.status.lock().clone()
-}
-
-async fn send_simulation(
-    state: &State<'_, AppRuntimeState>,
-    local_state: ValorantLocalState,
-    game_mode: ValorantGameMode,
-    confidence: f64,
-) -> Result<BackendResponse, String> {
-    let settings = state.settings.lock().clone();
-    let state_name = match local_state {
-        ValorantLocalState::PreGame => "pre_game",
-        ValorantLocalState::CurrentGame => "current_game",
-        _ => "unknown",
-    };
-    let mode_name = game_mode_label(&game_mode);
-    let hash = hex_sha256(&format!(
-        "simulation:{state_name}:{mode_name}:{}",
-        Utc::now().timestamp_millis()
-    ));
-    let payload = simulated_payload(
-        local_state.clone(),
-        game_mode.clone(),
-        hash.clone(),
-        confidence,
-    );
-
-    push_log(
-        &state.status,
-        "info",
-        &format!(
-            "Sending simulated {mode_name} {state_name} state ({}...).",
-            &hash[..8]
-        ),
-    );
-    match state.backend.send_state(&settings, &payload).await {
-        Ok(response) => {
-            let mut status = state.status.lock();
-            status.backend_connected = true;
-            status.local_state = local_state;
-            status.game_mode = game_mode;
-            status.confidence = confidence;
-            status.last_match_id_hash = Some(hash);
-            status.last_backend_response = response.message.clone();
-            if status.local_state == ValorantLocalState::CurrentGame {
-                status.cooldown_remaining_seconds = 600;
-            }
-            drop(status);
-            push_log(&state.status, "success", &response.message);
-            Ok(response)
-        }
-        Err(error) => {
-            state.status.lock().last_backend_response = error.clone();
-            push_log(&state.status, "error", &error);
-            Err(error)
-        }
-    }
-}
-
-pub fn simulated_payload(
-    local_state: ValorantLocalState,
-    game_mode: ValorantGameMode,
-    match_id_hash: String,
-    confidence: f64,
-) -> BackendEventPayload {
-    let state_name = state_label(&local_state);
-    let mode_name = game_mode_label(&game_mode);
-    BackendEventPayload {
-        source: "local_companion".into(),
-        state: local_state,
-        game_mode,
-        confidence,
-        match_id_hash: Some(match_id_hash),
-        details: BackendEventDetails {
-            detection_method: "simulation".into(),
-            region: "unknown".into(),
-            shard: "unknown".into(),
-            evidence: vec![format!("simulated_{state_name}_{mode_name}")],
-        },
-    }
 }
 
 pub fn push_log(status: &Arc<Mutex<ValorantDetectionStatus>>, level: &str, message: &str) {
@@ -448,21 +479,6 @@ fn sanitize_log(message: &str) -> String {
         }
     }
     sanitized
-}
-
-fn hex_sha256(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
-}
-
-fn state_label(state: &ValorantLocalState) -> &'static str {
-    match state {
-        ValorantLocalState::Unknown => "unknown",
-        ValorantLocalState::NotRunning => "not_running",
-        ValorantLocalState::Menus => "menus",
-        ValorantLocalState::PreGame => "pre_game",
-        ValorantLocalState::CurrentGame => "current_game",
-        ValorantLocalState::PostGame => "post_game",
-    }
 }
 
 fn game_mode_label(game_mode: &ValorantGameMode) -> &'static str {

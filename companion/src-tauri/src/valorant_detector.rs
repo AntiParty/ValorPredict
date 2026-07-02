@@ -5,9 +5,9 @@ use std::{
 
 use crate::{
     hashing::hash_match_id,
-    models::{BackendEventDetails, BackendEventPayload, ValorantGameMode, ValorantLocalState},
+    models::{ValorantGameMode, ValorantLocalState},
     process_detection::{detect_processes, ProcessSignals},
-    riot_local_client::{DuoParty, RiotLocalClient},
+    riot_local_client::RiotLocalClient,
     riot_lockfile::read_lockfile,
 };
 
@@ -19,6 +19,9 @@ pub struct DetectionSnapshot {
     pub game_mode: ValorantGameMode,
     pub confidence: f64,
     pub match_id_hash: Option<String>,
+    /// Raw Valorant match id, kept in-process only (never serialized out) so the
+    /// match result can be read back for auto-resolution. `None` outside a match.
+    pub match_id_raw: Option<String>,
     pub region: String,
     pub shard: String,
     pub evidence: Vec<String>,
@@ -38,6 +41,7 @@ impl DetectionSnapshot {
             game_mode,
             confidence,
             match_id_hash,
+            match_id_raw: None,
             region: "unknown".into(),
             shard: "unknown".into(),
             evidence: vec!["simulation".into()],
@@ -46,21 +50,6 @@ impl DetectionSnapshot {
         }
     }
 
-    pub fn to_payload(&self) -> BackendEventPayload {
-        BackendEventPayload {
-            source: "local_companion".into(),
-            state: self.state.clone(),
-            game_mode: self.game_mode.clone(),
-            confidence: self.confidence,
-            match_id_hash: self.match_id_hash.clone(),
-            details: BackendEventDetails {
-                detection_method: "riot_local_readonly".into(),
-                region: self.region.clone(),
-                shard: self.shard.clone(),
-                evidence: self.evidence.clone(),
-            },
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,23 +119,20 @@ impl DetectorMemory {
     }
 }
 
-pub async fn detect_current_party() -> Result<DuoParty, String> {
+/// Read whether the local player's team won `match_id`. Returns `Ok(None)` when
+/// the result isn't available yet (Riot is still finalizing the match) so the
+/// caller can retry on a later poll.
+pub async fn fetch_match_won(match_id: &str) -> Result<Option<bool>, String> {
     let processes = detect_processes();
     if !processes.riot_client_running {
-        return Ok(DuoParty {
-            in_party: false,
-            members: Vec::new(),
-        });
+        return Ok(None);
     }
     let Some(lockfile) = read_lockfile()? else {
-        return Ok(DuoParty {
-            in_party: false,
-            members: Vec::new(),
-        });
+        return Ok(None);
     };
     let client = RiotLocalClient::new(lockfile)?;
     let context = client.session_context().await?;
-    client.get_current_party(&context).await
+    client.get_match_result(match_id, &context).await
 }
 
 pub async fn detect_once() -> Result<DetectionSnapshot, String> {
@@ -157,6 +143,7 @@ pub async fn detect_once() -> Result<DetectionSnapshot, String> {
             game_mode: ValorantGameMode::Unknown,
             confidence: 0.95,
             match_id_hash: None,
+            match_id_raw: None,
             region: "unknown".into(),
             shard: "unknown".into(),
             evidence: vec!["riot_client_process_not_found".into()],
@@ -171,6 +158,7 @@ pub async fn detect_once() -> Result<DetectionSnapshot, String> {
             game_mode: ValorantGameMode::Unknown,
             confidence: 0.35,
             match_id_hash: None,
+            match_id_raw: None,
             region: "unknown".into(),
             shard: "unknown".into(),
             evidence: vec![
@@ -191,6 +179,7 @@ pub async fn detect_once() -> Result<DetectionSnapshot, String> {
             game_mode: signal.game_mode,
             confidence: 0.95,
             match_id_hash: Some(hash_match_id(&signal.match_id)),
+            match_id_raw: Some(signal.match_id.clone()),
             region: context.region_shard.region,
             shard: context.region_shard.shard,
             evidence,
@@ -205,6 +194,7 @@ pub async fn detect_once() -> Result<DetectionSnapshot, String> {
             game_mode: signal.game_mode,
             confidence: 0.85,
             match_id_hash: Some(hash_match_id(&signal.match_id)),
+            match_id_raw: Some(signal.match_id.clone()),
             region: context.region_shard.region,
             shard: context.region_shard.shard,
             evidence,
@@ -222,6 +212,7 @@ pub async fn detect_once() -> Result<DetectionSnapshot, String> {
         game_mode: ValorantGameMode::Unknown,
         confidence: 0.7,
         match_id_hash: None,
+        match_id_raw: None,
         region: context.region_shard.region,
         shard: context.region_shard.shard,
         evidence,

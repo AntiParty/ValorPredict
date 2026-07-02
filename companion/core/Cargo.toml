@@ -1,0 +1,28 @@
+[package]
+name = "vap-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77.2"
+description = "Tauri-independent backend logic for ValorPredict (DB, Twitch, predictions, API)"
+
+[lib]
+name = "vap_core"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+url = "2"
+async-trait = "0.1"
+axum = "0.8"
+uuid = { version = "1", features = ["v4"] }
+tower-http = { version = "0.6", features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3"
+httpmock = "0.7"
+tower = { version = "0.5", features = ["util"] }

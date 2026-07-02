@@ -2,7 +2,6 @@ use std::{fs, path::PathBuf};
 
 use regex::Regex;
 use reqwest::{Client, StatusCode};
-use serde::Serialize;
 use serde_json::Value;
 
 use crate::{models::ValorantGameMode, riot_lockfile::Lockfile};
@@ -32,20 +31,6 @@ pub struct RiotSessionContext {
 pub struct RiotMatchSignal {
     pub match_id: String,
     pub game_mode: ValorantGameMode,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DuoPartyMember {
-    pub riot_id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DuoParty {
-    pub in_party: bool,
-    pub members: Vec<DuoPartyMember>,
 }
 
 pub struct RiotLocalClient {
@@ -132,71 +117,34 @@ impl RiotLocalClient {
             .await
     }
 
-    pub async fn get_current_party(
+    /// Read the finished-match details for `match_id` and report whether the
+    /// local player's team won. Returns `Ok(None)` when the match isn't
+    /// available yet (still finalizing) so the caller can retry on a later poll.
+    pub async fn get_match_result(
         &self,
+        match_id: &str,
         context: &RiotSessionContext,
-    ) -> Result<DuoParty, String> {
-        let Some(players) = self
-            .glz_json(&format!("parties/v1/players/{}", context.puuid), context)
-            .await?
-        else {
-            return Ok(DuoParty {
-                in_party: false,
-                members: Vec::new(),
-            });
-        };
-        let Some(party_id) = extract_current_party_id(&players) else {
-            return Ok(DuoParty {
-                in_party: false,
-                members: Vec::new(),
-            });
-        };
-        let Some(party) = self
-            .glz_json(&format!("parties/v1/parties/{party_id}"), context)
-            .await?
-        else {
-            return Ok(DuoParty {
-                in_party: false,
-                members: Vec::new(),
-            });
-        };
-        let subjects = visible_party_subjects(&party, &context.puuid);
-        if subjects.is_empty() {
-            return Ok(DuoParty {
-                in_party: true,
-                members: Vec::new(),
-            });
-        }
-        let members = self.resolve_names(&subjects, context).await?;
-        Ok(DuoParty {
-            in_party: true,
-            members,
-        })
-    }
-
-    async fn resolve_names(
-        &self,
-        subjects: &[String],
-        context: &RiotSessionContext,
-    ) -> Result<Vec<DuoPartyMember>, String> {
+    ) -> Result<Option<bool>, String> {
         if context.region_shard.shard == "unknown" {
             return Err("Riot shard is unavailable.".into());
         }
         let url = format!(
-            "https://pd-{}.a.pvp.net/name-service/v2/players",
-            context.region_shard.shard
+            "https://pd.{}.a.pvp.net/match-details/v1/matches/{}",
+            context.region_shard.shard, match_id
         );
         let response = self
             .glz_client
-            .put(url)
+            .get(url)
             .header("X-Riot-ClientPlatform", CLIENT_PLATFORM)
             .header("X-Riot-ClientVersion", &context.client_version)
             .header("X-Riot-Entitlements-JWT", &context.entitlement_token)
             .bearer_auth(&context.access_token)
-            .json(subjects)
             .send()
             .await
-            .map_err(|_| "Read-only Riot name lookup failed.".to_string())?;
+            .map_err(|_| "Read-only Riot match-details request failed.".to_string())?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if matches!(
             response.status(),
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
@@ -205,15 +153,15 @@ impl RiotLocalClient {
         }
         if !response.status().is_success() {
             return Err(format!(
-                "Riot name-service endpoint returned {}.",
+                "Riot match-details endpoint returned {}.",
                 response.status()
             ));
         }
         let value: Value = response
             .json()
             .await
-            .map_err(|_| "Riot name-service endpoint returned invalid JSON.".to_string())?;
-        Ok(parse_name_service(&value))
+            .map_err(|_| "Riot match-details endpoint returned invalid JSON.".to_string())?;
+        Ok(determine_match_won(&value, &context.puuid))
     }
 
     async fn local_json(&self, path: &str) -> Result<Value, String> {
@@ -313,70 +261,21 @@ pub fn extract_match_id(value: &Value) -> Option<String> {
     string_field(value, &["MatchID", "matchId", "match_id"])
 }
 
-pub fn extract_current_party_id(value: &Value) -> Option<String> {
-    string_field(value, &["CurrentPartyID", "currentPartyId", "current_party_id"])
-        .filter(|id| !id.is_empty())
-}
-
-pub fn visible_party_subjects(party: &Value, self_puuid: &str) -> Vec<String> {
-    let Some(members) = party.get("Members").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    members
-        .iter()
-        .filter_map(|member| {
-            let subject = string_field(member, &["Subject", "subject"])?;
-            if subject == self_puuid {
-                return None;
-            }
-            let incognito = member
-                .get("PlayerIdentity")
-                .and_then(|identity| identity.get("Incognito"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            if incognito {
-                return None;
-            }
-            Some(subject)
-        })
-        .collect()
-}
-
-pub fn parse_name_service(value: &Value) -> Vec<DuoPartyMember> {
-    let Some(entries) = value.as_array() else {
-        return Vec::new();
-    };
-    entries
-        .iter()
-        .filter_map(|entry| {
-            let game_name = string_field(entry, &["GameName", "gameName"])?;
-            if game_name.is_empty() {
-                return None;
-            }
-            let tag_line = string_field(entry, &["TagLine", "tagLine"]).unwrap_or_default();
-            let riot_id = if tag_line.is_empty() {
-                game_name.clone()
-            } else {
-                format!("{game_name}#{tag_line}")
-            };
-            Some(DuoPartyMember {
-                riot_id,
-                name: game_name,
-            })
-        })
-        .collect()
-}
-
 pub fn normalize_game_mode(value: &Value) -> ValorantGameMode {
     let queue = recursive_string_field(value, &["QueueID", "queueID", "queueId"])
         .unwrap_or_default()
         .to_ascii_lowercase();
+    // The pregame endpoint exposes `ProvisioningFlowID`, while the live
+    // core-game endpoint uses `ProvisioningFlow` (no "ID") — accept both so
+    // custom games are recognized in-match, not just at agent select.
     let provisioning = recursive_string_field(
         value,
         &[
             "ProvisioningFlowID",
             "provisioningFlowID",
             "provisioningFlowId",
+            "ProvisioningFlow",
+            "provisioningFlow",
         ],
     )
     .unwrap_or_default()
@@ -389,6 +288,31 @@ pub fn normalize_game_mode(value: &Value) -> ValorantGameMode {
         (false, true) => ValorantGameMode::Custom,
         _ => ValorantGameMode::Unknown,
     }
+}
+
+/// Given a match-details document and the local player's puuid, return whether
+/// that player's team won, or `None` if it can't be determined from the data.
+pub fn determine_match_won(details: &Value, puuid: &str) -> Option<bool> {
+    let players = details.get("players").and_then(Value::as_array)?;
+    let my_team = players.iter().find_map(|player| {
+        let subject = string_field(player, &["subject", "Subject"])?;
+        if subject == puuid {
+            string_field(player, &["teamId", "TeamID", "teamID"])
+        } else {
+            None
+        }
+    })?;
+    let teams = details.get("teams").and_then(Value::as_array)?;
+    teams.iter().find_map(|team| {
+        let team_id = string_field(team, &["teamId", "TeamID", "teamID"])?;
+        if team_id.eq_ignore_ascii_case(&my_team) {
+            team.get("won")
+                .or_else(|| team.get("Won"))
+                .and_then(Value::as_bool)
+        } else {
+            None
+        }
+    })
 }
 
 pub fn parse_region_shard_from_log(contents: &str) -> Option<(String, String)> {

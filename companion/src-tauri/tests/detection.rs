@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use valorant_auto_predictions_companion_lib::{
+use valorpredict_lib::{
     hashing::hash_match_id,
     models::{ValorantGameMode, ValorantLocalState},
     riot_local_client::{extract_match_id, normalize_game_mode, parse_region_shard_from_log},
@@ -31,6 +31,12 @@ fn riot_match_details_normalize_only_supported_game_modes() {
         "QueueID": "",
         "ProvisioningFlowID": "CustomGame"
     });
+    // The live core-game endpoint uses `ProvisioningFlow` (no "ID").
+    let custom_in_match = serde_json::json!({
+        "MatchID": "custom-live-id",
+        "QueueID": "",
+        "ProvisioningFlow": "CustomGame"
+    });
     let unsupported = serde_json::json!({
         "QueueID": "unrated",
         "ProvisioningFlowID": "Matchmaking"
@@ -45,28 +51,16 @@ fn riot_match_details_normalize_only_supported_game_modes() {
         ValorantGameMode::Competitive
     );
     assert_eq!(normalize_game_mode(&custom), ValorantGameMode::Custom);
+    assert_eq!(
+        normalize_game_mode(&custom_in_match),
+        ValorantGameMode::Custom
+    );
     assert_eq!(normalize_game_mode(&unsupported), ValorantGameMode::Unknown);
     assert_eq!(normalize_game_mode(&conflicting), ValorantGameMode::Unknown);
     assert_eq!(
         normalize_game_mode(&serde_json::json!({})),
         ValorantGameMode::Unknown
     );
-}
-
-#[test]
-fn backend_payload_contains_only_the_normalized_game_mode() {
-    let snapshot = DetectionSnapshot::simulated(
-        ValorantLocalState::CurrentGame,
-        ValorantGameMode::Custom,
-        Some("a".repeat(64)),
-        0.95,
-    );
-    let serialized = serde_json::to_value(snapshot.to_payload()).unwrap();
-
-    assert_eq!(serialized["gameMode"], "custom");
-    assert!(serialized.get("queueID").is_none());
-    assert!(serialized.get("provisioningFlowID").is_none());
-    assert!(!serialized.to_string().contains("riot-token"));
 }
 
 #[test]
