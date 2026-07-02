@@ -86,7 +86,7 @@ impl PredictionService {
         let title = preset.title_template.replace("{streamer}", &user.twitch_login);
         let session = self
             .db
-            .create_session(twitch_user_id, &title)
+            .create_session(twitch_user_id, &title, &preset.outcome_a, &preset.outcome_b)
             .map_err(|_| ServiceError::Message("A prediction is already active.".into()))?;
 
         let access_token = self.fresh_access_token(twitch_user_id).await?;
@@ -457,6 +457,9 @@ mod tests {
         assert_eq!(session.status, "prediction_open");
         assert_eq!(session.title, "Will ace win?");
         assert_eq!(session.twitch_prediction_id.as_deref(), Some("pred-1"));
+        // The preset's outcome names ride along so the UI can label resolve buttons.
+        assert_eq!(session.outcome_a_label, "Yes");
+        assert_eq!(session.outcome_b_label, "No");
 
         let events = db.get_recent_events("123", 5).unwrap();
         assert_eq!(events[0].event_type, "prediction_created");

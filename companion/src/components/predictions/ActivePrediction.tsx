@@ -37,7 +37,7 @@ export function ActivePrediction({ activeSession, busy, onResolve, onCancel }: P
               disabled={busy}
               onClick={() => onResolve("A")}
             >
-              Resolve A
+              Resolve — {activeSession.outcome_a_label || "Outcome A"}
             </button>
             <button
               className="button secondary"
@@ -45,7 +45,7 @@ export function ActivePrediction({ activeSession, busy, onResolve, onCancel }: P
               disabled={busy}
               onClick={() => onResolve("B")}
             >
-              Resolve B
+              Resolve — {activeSession.outcome_b_label || "Outcome B"}
             </button>
           </div>
           <button

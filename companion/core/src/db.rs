@@ -73,6 +73,10 @@ pub struct PredictionSession {
     pub outcome_a_id: Option<String>,
     #[serde(skip_serializing)]
     pub outcome_b_id: Option<String>,
+    /// Display names of the two outcomes (from the preset that opened the
+    /// prediction), so the UI can label its resolve buttons.
+    pub outcome_a_label: String,
+    pub outcome_b_label: String,
     pub title: String,
     pub started_at: Option<String>,
     pub resolved_at: Option<String>,
@@ -192,6 +196,8 @@ impl Db {
                 twitch_prediction_id TEXT,
                 outcome_a_id TEXT,
                 outcome_b_id TEXT,
+                outcome_a_label TEXT NOT NULL DEFAULT '',
+                outcome_b_label TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL,
                 started_at TEXT,
                 resolved_at TEXT,
@@ -226,6 +232,15 @@ impl Db {
         // intentionally ignored.
         let _ = conn.execute(
             "ALTER TABLE auto_prediction_presets ADD COLUMN win_outcome TEXT NOT NULL DEFAULT 'A'",
+            [],
+        );
+        // Same backfill pattern for the outcome display labels on sessions.
+        let _ = conn.execute(
+            "ALTER TABLE prediction_sessions ADD COLUMN outcome_a_label TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE prediction_sessions ADD COLUMN outcome_b_label TEXT NOT NULL DEFAULT ''",
             [],
         );
         Ok(())
@@ -410,13 +425,20 @@ impl Db {
 
     // ---- prediction sessions ----------------------------------------------
 
-    pub fn create_session(&self, twitch_user_id: &str, title: &str) -> Result<PredictionSession> {
+    pub fn create_session(
+        &self,
+        twitch_user_id: &str,
+        title: &str,
+        outcome_a_label: &str,
+        outcome_b_label: &str,
+    ) -> Result<PredictionSession> {
         let id = {
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "INSERT INTO prediction_sessions (twitch_user_id, status, title) \
-                 VALUES (?1, 'creating', ?2)",
-                params![twitch_user_id, title],
+                "INSERT INTO prediction_sessions \
+                 (twitch_user_id, status, title, outcome_a_label, outcome_b_label) \
+                 VALUES (?1, 'creating', ?2, ?3, ?4)",
+                params![twitch_user_id, title, outcome_a_label, outcome_b_label],
             )?;
             conn.last_insert_rowid()
         };
@@ -428,7 +450,8 @@ impl Db {
         conn.query_row(
             "SELECT id, twitch_user_id, status, twitch_prediction_id, outcome_a_id, \
              outcome_b_id, title, started_at, resolved_at, result, \
-             channel_points_wagered, created_at, updated_at \
+             channel_points_wagered, created_at, updated_at, \
+             outcome_a_label, outcome_b_label \
              FROM prediction_sessions WHERE id = ?1",
             params![id],
             map_session,
@@ -442,7 +465,8 @@ impl Db {
         conn.query_row(
             "SELECT id, twitch_user_id, status, twitch_prediction_id, outcome_a_id, \
              outcome_b_id, title, started_at, resolved_at, result, \
-             channel_points_wagered, created_at, updated_at \
+             channel_points_wagered, created_at, updated_at, \
+             outcome_a_label, outcome_b_label \
              FROM prediction_sessions \
              WHERE twitch_user_id = ?1 AND status IN ('creating', 'prediction_open') \
              ORDER BY id DESC LIMIT 1",
@@ -610,6 +634,8 @@ fn map_session(row: &Row) -> rusqlite::Result<PredictionSession> {
         channel_points_wagered: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+        outcome_a_label: row.get(13)?,
+        outcome_b_label: row.get(14)?,
     })
 }
 
@@ -698,8 +724,10 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         db.upsert_user(sample_user()).unwrap();
 
-        let session = db.create_session("123", "Will ace win?").unwrap();
+        let session = db.create_session("123", "Will ace win?", "Yes", "No").unwrap();
         assert_eq!(session.status, "creating");
+        assert_eq!(session.outcome_a_label, "Yes");
+        assert_eq!(session.outcome_b_label, "No");
         assert_eq!(
             db.get_active_session("123").unwrap().unwrap().id,
             session.id
@@ -736,8 +764,8 @@ mod tests {
     fn enforces_one_active_session_per_user() {
         let db = Db::open_in_memory().unwrap();
         db.upsert_user(sample_user()).unwrap();
-        db.create_session("123", "first").unwrap();
-        assert!(db.create_session("123", "second").is_err());
+        db.create_session("123", "first", "Yes", "No").unwrap();
+        assert!(db.create_session("123", "second", "Yes", "No").is_err());
     }
 
     #[test]

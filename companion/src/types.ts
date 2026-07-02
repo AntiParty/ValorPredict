@@ -83,6 +83,8 @@ export interface PredictionSession {
   twitch_user_id: string;
   status: PredictionSessionStatus;
   twitch_prediction_id: string | null;
+  outcome_a_label: string;
+  outcome_b_label: string;
   title: string;
   started_at: string | null;
   resolved_at: string | null;
