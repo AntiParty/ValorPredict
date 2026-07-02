@@ -629,8 +629,6 @@ summary:focus-visible {
 .streamer-window {
   overflow: hidden;
   min-height: 100px;
-  border-top: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
   -webkit-mask-image: linear-gradient(
     90deg,
     transparent,
@@ -680,7 +678,7 @@ summary:focus-visible {
   place-items: center;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 50%;
   background: #17181e;
   font-size: 14px;
   font-weight: 800;

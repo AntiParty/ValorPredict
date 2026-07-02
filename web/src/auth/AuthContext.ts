@@ -1,13 +1,13 @@
 import { createContext, useContext } from "react";
 
-import type { FlashMessage, SafeUser } from "../types";
+import type { SafeUser } from "../types";
 
 export interface AuthState {
   status: "loading" | "authenticated" | "unauthenticated";
   user: SafeUser | null;
-  flash: FlashMessage | null;
+  /** Whether Twitch credentials have been saved (first-run gate). */
+  configured: boolean;
   refresh: () => void;
-  clearFlash: () => void;
 }
 
 export const AuthContext = createContext<AuthState | null>(null);

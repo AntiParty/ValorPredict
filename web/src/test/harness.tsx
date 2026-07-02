@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
 
 import { ToastProvider } from "../components/Toast";
 
@@ -20,9 +19,7 @@ export function Providers({
 }) {
   return (
     <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <MemoryRouter>{children}</MemoryRouter>
-      </ToastProvider>
+      <ToastProvider>{children}</ToastProvider>
     </QueryClientProvider>
   );
 }

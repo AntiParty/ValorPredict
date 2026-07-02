@@ -1,27 +1,33 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider } from "./auth/AuthProvider";
-import { ProtectedRoute } from "./auth/ProtectedRoute";
+import { useAuth } from "./auth/AuthContext";
 import { ToastProvider } from "./components/Toast";
+import { Connect } from "./pages/Connect";
 import { Dashboard } from "./pages/Dashboard";
-import { Landing } from "./pages/Landing";
+import { Settings } from "./pages/Settings";
 
-export function AppRoutes() {
-  return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
+// Single-window desktop app: which screen shows is a function of auth state, so
+// there is no client-side router. First run -> Settings (enter Twitch creds);
+// configured but signed out -> Connect; signed in -> Dashboard.
+function AppShell() {
+  const { status, configured, user } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <div className="route-loading" role="status" aria-live="polite">
+        <span className="route-loading__spinner" aria-hidden="true" />
+        <span>Loading…</span>
+      </div>
+    );
+  }
+  if (!configured) {
+    return <Settings />;
+  }
+  if (!user) {
+    return <Connect />;
+  }
+  return <Dashboard />;
 }
 
 const queryClient = new QueryClient({
@@ -33,13 +39,11 @@ const queryClient = new QueryClient({
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <ToastProvider>
-            <AppRoutes />
-          </ToastProvider>
-        </AuthProvider>
-      </BrowserRouter>
+      <AuthProvider>
+        <ToastProvider>
+          <AppShell />
+        </ToastProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

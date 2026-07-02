@@ -21,6 +21,7 @@ type TwitchActions = TwitchAuthActions & TwitchPredictionActions;
 interface AppRuntimeOptions {
   developmentMode?: boolean;
   webDistPath?: string;
+  serveStatic?: boolean;
 }
 
 export function createApp(
@@ -104,28 +105,44 @@ export function createApp(
     registerDevelopmentRoutes(app, database);
   }
 
-  // Serve the built React SPA. Static assets win first; everything else falls
-  // back to index.html so the client-side router owns page routing. API, auth,
-  // and duo routes are registered above, so they never reach this fallback.
-  app.use(express.static(webDistPath));
-  app.use((request: Request, response: Response, next: NextFunction) => {
-    if (request.method !== "GET" && request.method !== "HEAD") {
-      next();
-      return;
-    }
-    if (
-      request.path === "/api" ||
-      request.path.startsWith("/api/") ||
-      request.path.startsWith("/auth/") ||
-      request.path.startsWith("/duo/")
-    ) {
-      next();
-      return;
-    }
-    response.sendFile(path.join(webDistPath, "index.html"), (error) => {
-      if (error) next(error);
+  if (options.serveStatic !== false) {
+    // Serve the built React SPA. Static assets win first; everything else falls
+    // back to index.html so the client-side router owns page routing. API, auth,
+    // and duo routes are registered above, so they never reach this fallback.
+    app.use(express.static(webDistPath));
+    app.use((request: Request, response: Response, next: NextFunction) => {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        next();
+        return;
+      }
+      if (
+        request.path === "/api" ||
+        request.path.startsWith("/api/") ||
+        request.path.startsWith("/auth/") ||
+        request.path.startsWith("/duo/")
+      ) {
+        next();
+        return;
+      }
+      response.sendFile(path.join(webDistPath, "index.html"), (error) => {
+        if (error) next(error);
+      });
     });
-  });
+  }
+
+  // Final safety net: never leak stack traces or internals to the client.
+  app.use(
+    (error: unknown, _request: Request, response: Response, next: NextFunction) => {
+      if (response.headersSent) {
+        next(error);
+        return;
+      }
+      if (developmentMode) {
+        console.error(error);
+      }
+      response.status(500).json({ ok: false, error: "Internal server error." });
+    },
+  );
 
   return app;
 }

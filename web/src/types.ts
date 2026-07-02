@@ -1,5 +1,5 @@
-// Frontend mirrors of the JSON the Express API returns. Kept in sync with
-// the backend src/types.ts shapes that cross the wire.
+// Frontend mirrors of the JSON the Rust backend returns. Kept in sync with the
+// shapes in companion/core/src.
 
 export type ValorantGameMode = "competitive" | "custom";
 
@@ -9,24 +9,9 @@ export interface SafeUser {
   twitch_login: string;
   twitch_display_name: string;
   twitch_profile_image_url: string | null;
-  public_showcase_enabled: boolean;
   token_expires_at: string;
-  has_local_api_key: boolean;
-  local_api_key_created_at: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface PublicStats {
-  connectedStreamers: number;
-  predictionsRun: number;
-  channelPointsWagered: number;
-}
-
-export interface PublicStreamer {
-  twitch_login: string;
-  twitch_display_name: string;
-  twitch_profile_image_url: string | null;
 }
 
 export interface AutoPredictionPreset {
@@ -72,40 +57,15 @@ export interface PredictionEvent {
   created_at: string;
 }
 
-export interface DuoConfig {
-  twitch_user_id: string;
-  enabled: number;
-  public_token: string;
-  template: string;
-  fallback_text: string;
-  updated_at: string;
-}
-
-export interface DuoShoutout {
-  id: number;
-  twitch_user_id: string;
-  riot_id: string;
-  display: string;
-}
-
 export interface FlashMessage {
   kind: "success" | "error";
   message: string;
 }
 
-export interface LocalApiKeyReveal {
-  apiKey: string;
-  createdAt: string;
-}
-
 export interface MeResponse {
   user: SafeUser | null;
   flash: FlashMessage | null;
-}
-
-export interface PublicResponse {
-  stats: PublicStats;
-  streamers: PublicStreamer[];
+  configured: boolean;
 }
 
 export interface DashboardData {
@@ -113,11 +73,5 @@ export interface DashboardData {
   presets: AutoPredictionPreset[];
   activeSession: PredictionSession | null;
   events: PredictionEvent[];
-  localApiKeyReveal: LocalApiKeyReveal | null;
-  duo: {
-    config: DuoConfig;
-    shoutouts: DuoShoutout[];
-    url: string;
-  };
   developmentMode: boolean;
 }

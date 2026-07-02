@@ -2,14 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Brand } from "../components/Brand";
 import { ActivePrediction } from "../components/dashboard/ActivePrediction";
-import { CompanionCard } from "../components/dashboard/CompanionCard";
 import { DeveloperTools } from "../components/dashboard/DeveloperTools";
-import { DuoCommandCard } from "../components/dashboard/DuoCommandCard";
 import { Events } from "../components/dashboard/Events";
 import { PresetCard } from "../components/dashboard/PresetCard";
-import { PublicShowcaseCard } from "../components/dashboard/PublicShowcaseCard";
 import { api } from "../lib/api";
-import { Link } from "react-router-dom";
 
 export function Dashboard() {
   const { data, isPending, isError } = useQuery({
@@ -34,15 +30,7 @@ export function Dashboard() {
     );
   }
 
-  const {
-    user,
-    presets,
-    activeSession,
-    events,
-    localApiKeyReveal,
-    duo,
-    developmentMode,
-  } = data;
+  const { user, presets, activeSession, events, developmentMode } = data;
 
   const competitive = presets.find((preset) => preset.game_mode === "competitive");
   const custom = presets.find((preset) => preset.game_mode === "custom");
@@ -68,12 +56,6 @@ export function Dashboard() {
       <header className="app-header">
         <div className="app-nav">
           <Brand />
-          <div className="dashboard-nav-links">
-            <Link className="active" to="/dashboard">
-              Workspace
-            </Link>
-            <Link to="/">Public site</Link>
-          </div>
           <div className="account">
             <span className="status-pill ready">
               <i />
@@ -109,9 +91,6 @@ export function Dashboard() {
           </div>
           <aside className="sidebar-stack">
             <ActivePrediction activeSession={activeSession} />
-            <CompanionCard user={user} localApiKeyReveal={localApiKeyReveal} />
-            <DuoCommandCard duo={duo} />
-            <PublicShowcaseCard user={user} />
             {developmentMode ? (
               <DeveloperTools
                 competitive={competitive}

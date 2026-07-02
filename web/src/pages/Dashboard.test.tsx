@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../components/Toast";
@@ -12,13 +11,9 @@ vi.mock("../lib/api", () => ({
   api: {
     dashboard: vi.fn(),
     savePreset: vi.fn(),
-    setShowcase: vi.fn(),
-    saveDuo: vi.fn(),
-    regenerateDuo: vi.fn(),
     resolvePrediction: vi.fn(),
     cancelPrediction: vi.fn(),
     simulateMatchStart: vi.fn(),
-    generateLocalKey: vi.fn(),
   },
 }));
 
@@ -32,10 +27,7 @@ function makeData(overrides: Partial<DashboardData> = {}): DashboardData {
       twitch_login: "ace",
       twitch_display_name: "Ace",
       twitch_profile_image_url: null,
-      public_showcase_enabled: true,
       token_expires_at: "2026-01-01T00:00:00.000Z",
-      has_local_api_key: true,
-      local_api_key_created_at: "2026-01-01T00:00:00.000Z",
       created_at: "2026-01-01T00:00:00.000Z",
       updated_at: "2026-01-01T00:00:00.000Z",
     },
@@ -67,19 +59,6 @@ function makeData(overrides: Partial<DashboardData> = {}): DashboardData {
     ],
     activeSession: null,
     events: [],
-    localApiKeyReveal: null,
-    duo: {
-      config: {
-        twitch_user_id: "u1",
-        enabled: 1,
-        public_token: "tok",
-        template: "Queued with {names}",
-        fallback_text: "Solo",
-        updated_at: "2026-01-01T00:00:00.000Z",
-      },
-      shoutouts: [],
-      url: "https://vap.example/duo/tok",
-    },
     developmentMode: false,
     ...overrides,
   };
@@ -92,9 +71,7 @@ function renderDashboard() {
   return render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <MemoryRouter>
-          <Dashboard />
-        </MemoryRouter>
+        <Dashboard />
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -115,15 +92,22 @@ describe("Dashboard", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
-  it("renders both preset cards and the sidebar cards once loaded", async () => {
+  it("renders both preset cards once loaded", async () => {
     dashboardMock.mockResolvedValue(makeData());
     renderDashboard();
 
     expect(await screen.findByText("Competitive Preset")).toBeInTheDocument();
     expect(screen.getByText("Custom Preset")).toBeInTheDocument();
-    expect(screen.getByText("Local Companion App")).toBeInTheDocument();
-    expect(screen.getByText("Duo Command")).toBeInTheDocument();
-    expect(screen.getByText("Streamer showcase")).toBeInTheDocument();
+  });
+
+  it("does not render the removed hosted-service cards", async () => {
+    dashboardMock.mockResolvedValue(makeData());
+    renderDashboard();
+
+    await screen.findByText("Competitive Preset");
+    expect(screen.queryByText("Local Companion App")).not.toBeInTheDocument();
+    expect(screen.queryByText("Duo Command")).not.toBeInTheDocument();
+    expect(screen.queryByText("Streamer showcase")).not.toBeInTheDocument();
   });
 
   it("hides developer tools outside development mode", async () => {
@@ -145,7 +129,6 @@ describe("Dashboard", () => {
     dashboardMock.mockResolvedValue(makeData());
     renderDashboard();
 
-    // One of two presets enabled in the fixture.
     expect(await screen.findByText("1/2 presets enabled")).toBeInTheDocument();
   });
 });

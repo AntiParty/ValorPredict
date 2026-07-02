@@ -1,11 +1,7 @@
 import type {
   AutoPredictionPreset,
   DashboardData,
-  DuoConfig,
-  DuoShoutout,
-  LocalApiKeyReveal,
   MeResponse,
-  PublicResponse,
   ValorantGameMode,
 } from "../types";
 
@@ -30,8 +26,8 @@ async function request<T>(
   const init: RequestInit = { method, credentials: "include", headers };
 
   if (method !== "GET") {
-    // SameSite=lax already blocks cross-site cookie sends; this header is a
-    // second barrier that simple cross-site HTML forms cannot set.
+    // The server requires this header; a cross-site page can't set it without a
+    // CORS preflight (which we don't grant), so it guards localhost mutations.
     headers["X-Requested-With"] = "fetch";
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body ?? {});
@@ -58,43 +54,24 @@ export interface PresetInput {
   predictionWindow: number;
 }
 
-export interface DuoInput {
-  enabled: boolean;
-  template: string;
-  fallbackText: string;
-  shoutouts: Array<{ riotId: string; display: string }>;
-}
-
 export const api = {
   me: () => request<MeResponse>("GET", "/api/me"),
-  public: () => request<PublicResponse>("GET", "/api/public"),
   dashboard: () => request<DashboardData>("GET", "/api/dashboard"),
 
-  setShowcase: (enabled: boolean) =>
-    request<{ ok: true; publicShowcaseEnabled: boolean }>(
-      "POST",
-      "/api/settings/public-showcase",
-      { enabled },
-    ),
+  getTwitchSettings: () =>
+    request<{ configured: boolean }>("GET", "/api/settings/twitch"),
+
+  saveTwitchCredentials: (clientId: string, clientSecret: string) =>
+    request<{ ok: true; configured: boolean }>("POST", "/api/settings/twitch", {
+      clientId,
+      clientSecret,
+    }),
 
   savePreset: (gameMode: ValorantGameMode, input: PresetInput) =>
     request<{ ok: true; preset: AutoPredictionPreset }>(
       "POST",
       `/api/presets/${gameMode}`,
       input,
-    ),
-
-  saveDuo: (input: DuoInput) =>
-    request<{ ok: true; duo: { config: DuoConfig; shoutouts: DuoShoutout[] } }>(
-      "POST",
-      "/api/settings/duo",
-      input,
-    ),
-
-  regenerateDuo: () =>
-    request<{ ok: true; publicToken: string; url: string }>(
-      "POST",
-      "/api/settings/duo/regenerate",
     ),
 
   resolvePrediction: (winner: "A" | "B") =>
@@ -109,11 +86,5 @@ export const api = {
     request<{ ok: true; action: string; message: string }>(
       "POST",
       `/api/predictions/simulate-match-start/${gameMode}`,
-    ),
-
-  generateLocalKey: () =>
-    request<{ ok: true } & LocalApiKeyReveal>(
-      "POST",
-      "/api/local/generate-key",
     ),
 };

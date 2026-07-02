@@ -16,30 +16,23 @@ and reuses the existing Twitch OAuth session cookie for auth.
 
 ## Development
 
-Run the backend and the SPA dev server together:
+This package is **not run on its own** — the backend serves it. From the repo
+root, `npm run dev` starts one Express process that runs Vite in middleware mode,
+so the SPA gets hot reload and the API is same-origin on a single port:
 
 ```bash
-# terminal 1 — Express API on :3000
-npm run dev
-
-# terminal 2 — Vite dev server on :5173 (proxies /api, /auth, /duo to :3000)
-npm run dev --prefix web
+# repo root
+npm run dev          # Express + Vite on http://localhost:3000
 ```
 
-Open http://localhost:5173. The Vite proxy makes the app look same-origin to the
-browser so the SameSite=lax session cookie is sent with API calls. Point the
-proxy elsewhere with `VITE_API_TARGET`.
+See [`../src/dev-server.ts`](../src/dev-server.ts) for the integration and the
+root [README](../README.md) for the full workflow.
 
 ## Production
 
-```bash
-npm run build --prefix web   # emits web/dist
-npm run build                # compiles the backend to dist/
-npm start                    # Express serves web/dist same-origin
-```
-
-Express serves `web/dist` statically and falls back to `index.html` for client
-routes; `/api`, `/auth`, and `/duo` stay server-handled.
+`npm run build` at the repo root builds this SPA and folds it into the server's
+`dist/public`, so a single `dist/` serves the app. You can build just the web
+bundle with `npm run build:web` (emits `web/dist`).
 
 ## Tests
 

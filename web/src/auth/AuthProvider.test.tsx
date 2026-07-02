@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "../lib/api";
@@ -14,18 +13,12 @@ vi.mock("../lib/api", () => ({
 const meMock = vi.mocked(api.me);
 
 function Consumer() {
-  const { status, user, flash, clearFlash, refresh } = useAuth();
+  const { status, user, configured } = useAuth();
   return (
     <div>
       <p data-testid="status">{status}</p>
       <p data-testid="user">{user?.twitch_login ?? "none"}</p>
-      <p data-testid="flash">{flash ? `${flash.kind}:${flash.message}` : "none"}</p>
-      <button type="button" onClick={() => clearFlash()}>
-        clear flash
-      </button>
-      <button type="button" onClick={() => refresh()}>
-        refresh
-      </button>
+      <p data-testid="configured">{configured ? "yes" : "no"}</p>
     </div>
   );
 }
@@ -56,6 +49,7 @@ describe("AuthProvider", () => {
     meMock.mockResolvedValue({
       user: { twitch_login: "ace" } as never,
       flash: null,
+      configured: true,
     });
 
     renderProvider();
@@ -66,10 +60,11 @@ describe("AuthProvider", () => {
       expect(screen.getByTestId("status")).toHaveTextContent("authenticated");
     });
     expect(screen.getByTestId("user")).toHaveTextContent("ace");
+    expect(screen.getByTestId("configured")).toHaveTextContent("yes");
   });
 
-  it("resolves to unauthenticated when /api/me returns no user", async () => {
-    meMock.mockResolvedValue({ user: null, flash: null });
+  it("resolves to unauthenticated and unconfigured when /api/me is empty", async () => {
+    meMock.mockResolvedValue({ user: null, flash: null, configured: false });
 
     renderProvider();
 
@@ -77,22 +72,17 @@ describe("AuthProvider", () => {
       expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated");
     });
     expect(screen.getByTestId("user")).toHaveTextContent("none");
+    expect(screen.getByTestId("configured")).toHaveTextContent("no");
   });
 
-  it("surfaces the one-shot flash and clears it on demand", async () => {
-    meMock.mockResolvedValue({
-      user: null,
-      flash: { kind: "success", message: "Signed in." },
-    });
+  it("reports configured even before the user signs in", async () => {
+    meMock.mockResolvedValue({ user: null, flash: null, configured: true });
 
     renderProvider();
 
     await waitFor(() => {
-      expect(screen.getByTestId("flash")).toHaveTextContent("success:Signed in.");
+      expect(screen.getByTestId("configured")).toHaveTextContent("yes");
     });
-
-    await userEvent.click(screen.getByRole("button", { name: "clear flash" }));
-
-    expect(screen.getByTestId("flash")).toHaveTextContent("none");
+    expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated");
   });
 });

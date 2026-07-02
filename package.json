@@ -7,13 +7,14 @@
     "node": ">=20.19"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:web": "npm run dev --prefix web",
-    "dev:all": "concurrently -n api,web -c blue,magenta \"npm run dev\" \"npm run dev:web\"",
-    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/dev-server.ts",
+    "dev:api": "tsx watch src/index.ts",
+    "build": "npm run clean && npm run build:web && npm run build:server && node scripts/copy-web.mjs",
+    "clean": "node scripts/clean.mjs",
     "build:web": "npm run build --prefix web",
-    "build:all": "npm run build:web && npm run build",
-    "start": "node dist/src/index.js",
+    "build:server": "tsc -p tsconfig.build.json",
+    "start": "cross-env NODE_ENV=production node dist/src/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "test:web": "npm test --prefix web"
   },
@@ -29,9 +30,11 @@
     "@types/express-session": "^1.18.2",
     "@types/node": "^24.10.1",
     "@types/supertest": "^6.0.3",
-    "concurrently": "^10.0.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "cross-env": "^10.1.0",
     "supertest": "^7.1.4",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^8.0.16"
   }
 }
