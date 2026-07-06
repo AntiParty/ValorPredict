@@ -93,8 +93,8 @@ cargo test            # vap_core + companion tests
 ## Architecture
 
 - `core/` — `vap_core`: Tauri-independent Twitch OAuth, SQLite store, and
-  prediction lifecycle. Also ships a standalone `bin/server.rs` for the
-  optional legacy browser dashboard.
+  prediction lifecycle, so the backend logic can be compiled and tested on its
+  own.
 - `src-tauri/` — the desktop shell: read-only Riot detection loop, tray, and
   IPC commands that surface `vap_core` to the UI.
 - `src/` — React UI: onboarding wizard, prediction presets, monitoring.

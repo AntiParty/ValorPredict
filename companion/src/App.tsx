@@ -64,8 +64,8 @@ export function App() {
         </div>
       </header>
 
-      <PredictionsDashboard />
       <MonitorSection user={me.user} onReconnect={loadMe} />
+      <PredictionsDashboard />
     </main>
   );
 }

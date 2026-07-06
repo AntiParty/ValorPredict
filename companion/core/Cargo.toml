@@ -3,7 +3,7 @@ name = "vap-core"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.77.2"
-description = "Tauri-independent backend logic for ValorPredict (DB, Twitch, predictions, API)"
+description = "Tauri-independent backend logic for ValorPredict (DB, Twitch, predictions)"
 
 [lib]
 name = "vap_core"
@@ -18,11 +18,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 url = "2"
 async-trait = "0.1"
-axum = "0.8"
-uuid = { version = "1", features = ["v4"] }
-tower-http = { version = "0.6", features = ["fs"] }
 
 [dev-dependencies]
 tempfile = "3"
 httpmock = "0.7"
-tower = { version = "0.5", features = ["util"] }

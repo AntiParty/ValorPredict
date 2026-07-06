@@ -11,12 +11,6 @@ target/
 # Environment / secrets
 .env
 .env.*
-!.env.example
-
-# Local database (keep the data/ dir via .gitkeep)
-data/*.sqlite
-data/*.sqlite-shm
-data/*.sqlite-wal
 
 # Test / tooling output
 coverage/
