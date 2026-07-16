@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { companionApi } from "../../api";
 import { useVisiblePolling } from "../../hooks/useVisiblePolling";
@@ -21,6 +21,9 @@ export function PredictionsDashboard() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [pollInterval, setPollInterval] = useState(15);
+  const [persistedPollInterval, setPersistedPollInterval] = useState(15);
+  const [settingsSaveFailed, setSettingsSaveFailed] = useState(false);
+  const settingsSaving = useRef(false);
   const windowVisible = useWindowVisible();
 
   const refresh = useCallback(async () => {
@@ -37,7 +40,10 @@ export function PredictionsDashboard() {
   useEffect(() => {
     companionApi
       .loadSettings()
-      .then((settings: SettingsView) => setPollInterval(settings.pollIntervalSeconds))
+      .then((settings: SettingsView) => {
+        setPollInterval(settings.pollIntervalSeconds);
+        setPersistedPollInterval(settings.pollIntervalSeconds);
+      })
       .catch(() => undefined);
   }, []);
 
@@ -76,6 +82,7 @@ export function PredictionsDashboard() {
   const competitive = data.presets.find((preset) => preset.game_mode === "competitive");
   const custom = data.presets.find((preset) => preset.game_mode === "custom");
   const enabledCount = data.presets.filter((preset) => preset.enabled).length;
+  const competitiveReady = Boolean(competitive?.enabled);
 
   const savePreset = (gameMode: PresetGameMode, input: PresetInput) =>
     run(async () => {
@@ -83,12 +90,26 @@ export function PredictionsDashboard() {
       return { message: `${gameMode === "competitive" ? "Competitive" : "Custom"} preset saved.` };
     }, "Preset saved.");
 
-  const savePoll = (value: number) => {
-    setPollInterval(value);
-    run(async () => {
-      await companionApi.saveSettings(value);
-      return { message: "Settings saved." };
-    }, "Settings saved.");
+  const persistPollInterval = async () => {
+    if (pollInterval === persistedPollInterval || settingsSaving.current) return;
+    settingsSaving.current = true;
+    setBusy(true);
+    setSettingsSaveFailed(false);
+    setNotice(null);
+    try {
+      await companionApi.saveSettings(pollInterval);
+      setPersistedPollInterval(pollInterval);
+      setNotice({ kind: "success", message: "Settings saved." });
+    } catch (error) {
+      setSettingsSaveFailed(true);
+      setNotice({
+        kind: "error",
+        message: `${pollInterval}s not saved — ${String(error)}`,
+      });
+    } finally {
+      settingsSaving.current = false;
+      setBusy(false);
+    }
   };
 
   return (
@@ -119,16 +140,17 @@ export function PredictionsDashboard() {
         <button
           className="button primary"
           type="button"
-          disabled={busy}
+          disabled={busy || !competitiveReady}
           onClick={() =>
             run(() => companionApi.simulateMatchStart("competitive"), "Test prediction sent.")
           }
         >
-          Send test prediction
+          {competitiveReady ? "Send test prediction" : "Enable Competitive to test"}
         </button>
         <small>
-          Opens a real prediction from your Competitive preset so you can confirm
-          everything works — cancel it below anytime.
+          {competitiveReady
+            ? "Opens a real prediction from your Competitive preset so you can confirm everything works — cancel it below anytime."
+            : "Enable your Competitive preset before sending a real test prediction."}
         </small>
       </div>
 
@@ -153,7 +175,15 @@ export function PredictionsDashboard() {
               step={5}
               value={pollInterval}
               disabled={busy}
-              onChange={(event) => savePoll(Number(event.target.value))}
+              aria-label="Detection polling interval"
+              aria-invalid={settingsSaveFailed}
+              onChange={(event) => {
+                setPollInterval(Number(event.target.value));
+                setSettingsSaveFailed(false);
+              }}
+              onPointerUp={() => void persistPollInterval()}
+              onKeyUp={() => void persistPollInterval()}
+              onBlur={() => void persistPollInterval()}
             />
             <strong>{pollInterval}s</strong>
           </div>
