@@ -79,10 +79,7 @@ pub fn run() {
                     "show" => show_main_window(app),
                     "monitoring" => {
                         let state = app.state::<commands::AppRuntimeState>();
-                        if state
-                            .monitoring
-                            .load(std::sync::atomic::Ordering::SeqCst)
-                        {
+                        if state.monitoring.load(std::sync::atomic::Ordering::SeqCst) {
                             commands::end_monitoring(&state);
                         } else {
                             commands::begin_monitoring(&state);

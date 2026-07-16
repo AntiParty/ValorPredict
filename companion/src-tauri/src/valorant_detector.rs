@@ -6,7 +6,7 @@ use std::{
 use crate::{
     hashing::hash_match_id,
     models::{ValorantGameMode, ValorantLocalState},
-    process_detection::{detect_processes, ProcessSignals},
+    process_detection::{ProcessDetector, ProcessSignals},
     riot_local_client::RiotLocalClient,
     riot_lockfile::read_lockfile,
 };
@@ -49,7 +49,6 @@ impl DetectionSnapshot {
             lockfile_found: false,
         }
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,8 +121,11 @@ impl DetectorMemory {
 /// Read whether the local player's team won `match_id`. Returns `Ok(None)` when
 /// the result isn't available yet (Riot is still finalizing the match) so the
 /// caller can retry on a later poll.
-pub async fn fetch_match_won(match_id: &str) -> Result<Option<bool>, String> {
-    let processes = detect_processes();
+pub async fn fetch_match_won(
+    match_id: &str,
+    detector: &mut ProcessDetector,
+) -> Result<Option<bool>, String> {
+    let processes = detector.detect();
     if !processes.riot_client_running {
         return Ok(None);
     }
@@ -135,8 +137,8 @@ pub async fn fetch_match_won(match_id: &str) -> Result<Option<bool>, String> {
     client.get_match_result(match_id, &context).await
 }
 
-pub async fn detect_once() -> Result<DetectionSnapshot, String> {
-    let processes = detect_processes();
+pub async fn detect_once(detector: &mut ProcessDetector) -> Result<DetectionSnapshot, String> {
+    let processes = detector.detect();
     if !processes.riot_client_running {
         return Ok(DetectionSnapshot {
             state: ValorantLocalState::NotRunning,

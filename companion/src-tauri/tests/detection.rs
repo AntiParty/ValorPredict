@@ -3,10 +3,30 @@ use std::time::{Duration, Instant};
 use valorpredict_lib::{
     hashing::hash_match_id,
     models::{ValorantGameMode, ValorantLocalState},
+    process_detection::{record_process_name, ProcessSignals},
     riot_local_client::{extract_match_id, normalize_game_mode, parse_region_shard_from_log},
     riot_lockfile::Lockfile,
     valorant_detector::{DetectionDecision, DetectionSnapshot, DetectorMemory},
 };
+
+#[test]
+fn process_matching_is_case_insensitive_and_stops_when_complete() {
+    let mut signals = ProcessSignals::default();
+    assert!(!record_process_name(&mut signals, "RIOTCLIENTSERVICES.EXE"));
+    assert!(signals.riot_client_running);
+    assert!(!signals.valorant_running);
+    assert!(record_process_name(
+        &mut signals,
+        "Valorant-Win64-Shipping.exe"
+    ));
+    assert_eq!(
+        signals,
+        ProcessSignals {
+            riot_client_running: true,
+            valorant_running: true,
+        }
+    );
+}
 
 #[test]
 fn lockfile_parser_is_strict_and_debug_output_hides_password() {

@@ -19,6 +19,7 @@ use crate::{
         ValorantDetectionStatus, ValorantGameMode, ValorantLocalState,
     },
     predictions::{restore_runtime, PredictionRuntime},
+    process_detection::ProcessDetector,
     settings::SettingsStore,
     valorant_detector::{detect_once, fetch_match_won, DetectionDecision, DetectorMemory},
 };
@@ -116,10 +117,11 @@ pub fn begin_monitoring(state: &AppRuntimeState) -> ValorantDetectionStatus {
     let monitoring = state.monitoring.clone();
     tauri::async_runtime::spawn(async move {
         let mut memory = DetectorMemory::default();
+        let mut process_detector = ProcessDetector::new();
         let mut active_match: Option<ActiveMatch> = None;
         while monitoring.load(Ordering::SeqCst) {
             let poll_interval = clamp_poll_interval(settings.lock().poll_interval_seconds);
-            match detect_once().await {
+            match detect_once(&mut process_detector).await {
                 Ok(snapshot) => {
                     {
                         let mut current = status.lock();
@@ -137,10 +139,15 @@ pub fn begin_monitoring(state: &AppRuntimeState) -> ValorantDetectionStatus {
                     // A match we opened a prediction for has ended -> resolve it
                     // from the result. Uses the raw poll state, not the deduped
                     // decision, so we react as soon as the game is no longer live.
-                    if active_match.is_some()
-                        && snapshot.state != ValorantLocalState::CurrentGame
-                    {
-                        try_auto_resolve(&db, &predictions, &status, &mut active_match).await;
+                    if active_match.is_some() && snapshot.state != ValorantLocalState::CurrentGame {
+                        try_auto_resolve(
+                            &db,
+                            &predictions,
+                            &status,
+                            &mut active_match,
+                            &mut process_detector,
+                        )
+                        .await;
                     }
 
                     if let DetectionDecision::Send(decided) =
@@ -247,7 +254,11 @@ async fn trigger_local_prediction(
         Ok(result) => {
             status.lock().last_backend_response = result.message.clone();
             let created = result.action == "prediction_created";
-            push_log(status, if created { "success" } else { "info" }, &result.message);
+            push_log(
+                status,
+                if created { "success" } else { "info" },
+                &result.message,
+            );
             created
         }
         Err(error) => {
@@ -267,6 +278,7 @@ async fn try_auto_resolve(
     predictions: &Arc<RwLock<Option<PredictionRuntime>>>,
     status: &Arc<Mutex<ValorantDetectionStatus>>,
     active_match: &mut Option<ActiveMatch>,
+    process_detector: &mut ProcessDetector,
 ) {
     // Copy what we need so we don't hold a borrow of `active_match` across await.
     let (match_id, game_mode) = match active_match.as_ref() {
@@ -294,7 +306,7 @@ async fn try_auto_resolve(
         return;
     };
 
-    match fetch_match_won(&match_id).await {
+    match fetch_match_won(&match_id, process_detector).await {
         Ok(Some(won)) => {
             let win_outcome = db
                 .get_preset(&user.twitch_user_id, game_mode_label(&game_mode))
@@ -363,7 +375,9 @@ fn bump_resolve_attempt(
 }
 
 #[tauri::command]
-pub async fn simulate_pregame(state: State<'_, AppRuntimeState>) -> Result<BackendResponse, String> {
+pub async fn simulate_pregame(
+    state: State<'_, AppRuntimeState>,
+) -> Result<BackendResponse, String> {
     {
         let mut status = state.status.lock();
         status.local_state = ValorantLocalState::PreGame;
@@ -407,7 +421,11 @@ async fn run_local_simulation(
         .ok_or_else(|| "Connect your Twitch account first.".to_string())?;
     let runtime = crate::predictions::current_runtime(state)?;
     let mode = game_mode_label(&game_mode);
-    push_log(&state.status, "info", &format!("Simulating a {mode} match start…"));
+    push_log(
+        &state.status,
+        "info",
+        &format!("Simulating a {mode} match start…"),
+    );
 
     match runtime
         .service
