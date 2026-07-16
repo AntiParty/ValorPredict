@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { companionApi } from "../../api";
+import { useVisiblePolling } from "../../hooks/useVisiblePolling";
 import { useWindowVisible } from "../../hooks/useWindowVisible";
 import type {
   DashboardData,
@@ -13,6 +14,7 @@ import { EventsCard } from "./EventsCard";
 import { PresetCard } from "./PresetCard";
 
 type Notice = { kind: "success" | "error"; message: string } | null;
+const DASHBOARD_POLL_MS = 8000;
 
 export function PredictionsDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -23,7 +25,10 @@ export function PredictionsDashboard() {
 
   const refresh = useCallback(async () => {
     try {
-      setData(await companionApi.getDashboard());
+      const next = await companionApi.getDashboard();
+      setData((current) =>
+        current && JSON.stringify(current) === JSON.stringify(next) ? current : next,
+      );
     } catch (error) {
       setNotice({ kind: "error", message: String(error) });
     }
@@ -36,14 +41,7 @@ export function PredictionsDashboard() {
       .catch(() => undefined);
   }, []);
 
-  useEffect(() => {
-    // Pause polling while hidden to the tray; resume on show.
-    if (!windowVisible) return;
-    refresh().catch(() => undefined);
-    // Presets and events change rarely, so poll gently to stay light.
-    const timer = window.setInterval(() => refresh().catch(() => undefined), 8000);
-    return () => window.clearInterval(timer);
-  }, [refresh, windowVisible]);
+  useVisiblePolling(refresh, DASHBOARD_POLL_MS, windowVisible);
 
   const run = useCallback(
     async (operation: () => Promise<{ message?: string }>, fallback: string) => {

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { companionApi } from "../api";
+import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useWindowVisible } from "../hooks/useWindowVisible";
 import { HealthBanners } from "./predictions/HealthBanners";
 import type { DetectionStatus, SafeUser } from "../types";
@@ -56,19 +57,16 @@ export function MonitorSection({ user, onReconnect }: Props) {
 
   const refresh = useCallback(async () => {
     try {
-      setStatus(await companionApi.getStatus());
+      const next = await companionApi.getStatus();
+      setStatus((current) =>
+        JSON.stringify(current) === JSON.stringify(next) ? current : next,
+      );
     } catch {
       // The Tauri command bridge is absent in a plain Vite preview.
     }
   }, []);
 
-  useEffect(() => {
-    // Don't poll an invisible window — resume on show.
-    if (!windowVisible) return;
-    refresh().catch(() => undefined);
-    const timer = window.setInterval(() => refresh().catch(() => undefined), STATUS_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [refresh, windowVisible]);
+  useVisiblePolling(refresh, STATUS_POLL_MS, windowVisible);
 
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true);
