@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { MeResponse } from "../../types";
 import { Brand } from "./Brand";
@@ -7,22 +7,23 @@ import { CreateAppStep } from "./CreateAppStep";
 import { CredentialsStep } from "./CredentialsStep";
 
 const STEPS = ["Create app", "Add keys", "Connect"] as const;
+type SetupStep = "create" | "credentials" | "connect";
 
 interface Props {
   me: MeResponse;
-  // Re-reads auth state after each step (saving keys flips `configured`,
-  // connecting sets `user`), which drives the wizard forward.
   onAdvance: () => void;
 }
 
-// One continuous setup flow for the self-hosted Twitch app. The current step is
-// derived from auth state where possible — once credentials are saved the
-// backend reports `configured`, so we jump straight to Connect — with a single
-// piece of local state to move from "create app" to "add keys" before anything
-// has been persisted.
 export function OnboardingWizard({ me, onAdvance }: Props) {
-  const [createdApp, setCreatedApp] = useState(false);
-  const stepIndex = me.configured ? 2 : createdApp ? 1 : 0;
+  const [step, setStep] = useState<SetupStep>(
+    me.configured ? "connect" : "create",
+  );
+  const [editingCredentials, setEditingCredentials] = useState(false);
+  const stepIndex = step === "create" ? 0 : step === "credentials" ? 1 : 2;
+
+  useEffect(() => {
+    if (me.configured && !editingCredentials) setStep("connect");
+  }, [me.configured, editingCredentials]);
 
   return (
     <main className="companion-shell">
@@ -44,13 +45,35 @@ export function OnboardingWizard({ me, onAdvance }: Props) {
           ))}
         </ol>
 
-        {stepIndex === 0 && (
-          <CreateAppStep redirectUri={me.redirectUri} onContinue={() => setCreatedApp(true)} />
+        {step === "create" && (
+          <CreateAppStep
+            redirectUri={me.redirectUri}
+            onContinue={() => setStep("credentials")}
+          />
         )}
-        {stepIndex === 1 && (
-          <CredentialsStep redirectUri={me.redirectUri} onSaved={onAdvance} />
+        {step === "credentials" && (
+          <CredentialsStep
+            redirectUri={me.redirectUri}
+            onBack={() => {
+              setEditingCredentials(false);
+              setStep(me.configured ? "connect" : "create");
+            }}
+            onSaved={() => {
+              setEditingCredentials(false);
+              setStep("connect");
+              onAdvance();
+            }}
+          />
         )}
-        {stepIndex === 2 && <ConnectStep onConnected={onAdvance} />}
+        {step === "connect" && (
+          <ConnectStep
+            onConnected={onAdvance}
+            onEditCredentials={() => {
+              setEditingCredentials(true);
+              setStep("credentials");
+            }}
+          />
+        )}
       </section>
     </main>
   );

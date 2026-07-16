@@ -2,10 +2,12 @@ import { useState } from "react";
 
 import { companionApi } from "../../api";
 
-// Step 3: authorize the saved Twitch app. The browser opens for sign-in and
-// returns here; on success the backend reports a `user` and the wizard hands
-// off to the main workspace.
-export function ConnectStep({ onConnected }: { onConnected: () => void }) {
+interface Props {
+  onConnected: () => void;
+  onEditCredentials: () => void;
+}
+
+export function ConnectStep({ onConnected, onEditCredentials }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -32,13 +34,27 @@ export function ConnectStep({ onConnected }: { onConnected: () => void }) {
       </div>
       <p className="muted-line">
         Authorize prediction management so the companion can open and resolve
-        Channel Points Predictions automatically when a match starts. Your
-        browser opens for sign-in and returns here.
+        Channel Points Predictions automatically. Twitch Predictions require an
+        Affiliate or Partner account.
+      </p>
+      <p className="field-note">
+        Your browser will open for sign-in. When Twitch confirms the connection,
+        close that tab and return to ValorPredict.
       </p>
       {error && <div className="pred-notice error">{error}</div>}
-      <button className="button primary wide" type="button" disabled={busy} onClick={connect}>
-        {busy ? "Waiting for Twitch…" : "Connect Twitch"}
-      </button>
+      <div className="wizard-actions">
+        <button
+          className="button ghost"
+          type="button"
+          disabled={busy}
+          onClick={onEditCredentials}
+        >
+          Edit credentials
+        </button>
+        <button className="button primary" type="button" disabled={busy} onClick={connect}>
+          {busy ? "Waiting for Twitch…" : "Connect Twitch"}
+        </button>
+      </div>
     </div>
   );
 }

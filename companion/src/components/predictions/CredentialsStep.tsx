@@ -4,13 +4,11 @@ import { companionApi } from "../../api";
 
 interface Props {
   redirectUri: string;
+  onBack: () => void;
   onSaved: () => void;
 }
 
-// Step 2: paste the Client ID + Secret from the app created in step 1. Stored
-// only on this PC. Saving flips the backend's `configured` flag, which advances
-// the wizard to the Connect step.
-export function CredentialsStep({ redirectUri, onSaved }: Props) {
+export function CredentialsStep({ redirectUri, onBack, onSaved }: Props) {
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -40,7 +38,7 @@ export function CredentialsStep({ redirectUri, onSaved }: Props) {
       </div>
       <p className="muted-line">
         Open your app in the Twitch console and copy its Client ID and Secret.
-        They are stored only on this PC.
+        They are stored only on this PC and never sent to a ValorPredict server.
       </p>
       {error && <div className="pred-notice error">{error}</div>}
       <form onSubmit={handleSubmit}>
@@ -67,9 +65,14 @@ export function CredentialsStep({ redirectUri, onSaved }: Props) {
             required
           />
         </label>
-        <button className="button primary wide" type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Save and continue"}
-        </button>
+        <div className="wizard-actions">
+          <button className="button ghost" type="button" disabled={busy} onClick={onBack}>
+            Back
+          </button>
+          <button className="button primary" type="submit" disabled={busy}>
+            {busy ? "Saving…" : "Save and continue"}
+          </button>
+        </div>
       </form>
       <p className="field-note">
         Redirect URL must match exactly: <code>{redirectUri}</code>
