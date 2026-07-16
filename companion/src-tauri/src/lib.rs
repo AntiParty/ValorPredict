@@ -24,7 +24,7 @@ fn build_main_window(app: &tauri::AppHandle) {
     let _ = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
         .title("ValorPredict")
         .inner_size(1060.0, 800.0)
-        .min_inner_size(760.0, 680.0)
+        .min_inner_size(560.0, 640.0)
         .resizable(true)
         .build();
 }
