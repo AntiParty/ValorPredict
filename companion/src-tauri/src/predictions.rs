@@ -300,8 +300,12 @@ pub async fn connect_twitch(
     // `localhost` resolves to IPv6 (::1) or IPv4 (127.0.0.1) depending on the
     // browser/OS (Windows often prefers ::1), so listen on both loopback
     // addresses or the redirect would be refused.
-    let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, OAUTH_PORT)).await.ok();
-    let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, OAUTH_PORT)).await.ok();
+    let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, OAUTH_PORT))
+        .await
+        .ok();
+    let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, OAUTH_PORT))
+        .await
+        .ok();
     if v4.is_none() && v6.is_none() {
         return Err(format!(
             "Could not start the local sign-in listener on port {OAUTH_PORT}. \
