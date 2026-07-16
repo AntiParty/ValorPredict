@@ -1,34 +1,53 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { companionApi } from "./api";
+import { BootstrapError } from "./components/BootstrapError";
 import { MonitorSection } from "./components/MonitorSection";
 import { Brand } from "./components/predictions/Brand";
 import { OnboardingWizard } from "./components/predictions/OnboardingWizard";
 import { PredictionsDashboard } from "./components/predictions/PredictionsDashboard";
+import { friendlyError, type UserFacingError } from "./errors";
 import { initials } from "./format";
 import type { MeResponse } from "./types";
 
 const FALLBACK_REDIRECT = "http://localhost:3000/auth/twitch/callback";
 
-type AuthState = { status: "loading" } | { status: "ready"; me: MeResponse };
+type AuthState =
+  | { status: "loading" }
+  | { status: "ready"; me: MeResponse }
+  | { status: "error"; error: UserFacingError };
+
+const previewMode =
+  import.meta.env.DEV && import.meta.env.VITE_COMPANION_PREVIEW === "true";
 
 // Single-window desktop app: the visible screen is a function of auth state, so
-// there's no router. Not connected -> the setup wizard (create app -> add keys
-// -> connect); connected -> the predictions + monitoring workspace.
+// there's no router. Not connected -> setup; connected -> the local workspace.
 export function App() {
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+  const [retrying, setRetrying] = useState(false);
 
   const loadMe = useCallback(async () => {
+    setRetrying(true);
     try {
       const me = await companionApi.getMe();
       setAuth({ status: "ready", me });
-    } catch {
-      // A plain Vite preview has no Tauri bridge — fall back to the setup screen
-      // so the UI still renders during design work.
-      setAuth({
-        status: "ready",
-        me: { user: null, configured: false, redirectUri: FALLBACK_REDIRECT },
-      });
+    } catch (error) {
+      if (previewMode) {
+        setAuth({
+          status: "ready",
+          me: { user: null, configured: false, redirectUri: FALLBACK_REDIRECT },
+        });
+      } else {
+        setAuth({
+          status: "error",
+          error: friendlyError(
+            error,
+            "The local companion service isn't responding. Make sure ValorPredict is running, then try again.",
+          ),
+        });
+      }
+    } finally {
+      setRetrying(false);
     }
   }, []);
 
@@ -47,9 +66,17 @@ export function App() {
     );
   }
 
+  if (auth.status === "error") {
+    return (
+      <BootstrapError
+        error={auth.error}
+        onRetry={() => loadMe().catch(() => undefined)}
+        retrying={retrying}
+      />
+    );
+  }
+
   const { me } = auth;
-  // First run through registering credentials and connecting is one continuous
-  // wizard; the workspace only renders once an account is connected.
   if (!me.user) {
     return <OnboardingWizard me={me} onAdvance={loadMe} />;
   }
