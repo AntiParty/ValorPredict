@@ -30,3 +30,4 @@ Thumbs.db
 .claude/launch.json
 /companion/src-tauri/target-codex
 /docs/superpowers
+/.worktrees/
