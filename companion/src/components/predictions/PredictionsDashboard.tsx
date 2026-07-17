@@ -114,11 +114,18 @@ export function PredictionsDashboard() {
 
   return (
     <section className="predictions-panel">
+      <ActivePrediction
+        activeSession={data.activeSession}
+        busy={busy}
+        onResolve={(winner) => run(() => companionApi.resolvePrediction(winner), "Prediction resolved.")}
+        onCancel={() => run(() => companionApi.cancelPrediction(), "Prediction cancelled.")}
+      />
+
       <div className="panel-heading">
         <div>
           <h2>Prediction presets</h2>
         </div>
-        <span className="quiet-pill">{enabledCount}/2 enabled</span>
+        <span className="quiet-count">{enabledCount}/2 enabled</span>
       </div>
 
       {notice && <div className={`pred-notice ${notice.kind}`}>{notice.message}</div>}
@@ -136,6 +143,9 @@ export function PredictionsDashboard() {
         )}
       </div>
 
+      <details className="more-disclosure">
+        <summary>More</summary>
+        <div className="more-content">
       <div className="test-row">
         <button
           className="button primary"
@@ -154,17 +164,9 @@ export function PredictionsDashboard() {
         </small>
       </div>
 
-      <ActivePrediction
-        activeSession={data.activeSession}
-        busy={busy}
-        onResolve={(winner) => run(() => companionApi.resolvePrediction(winner), "Prediction resolved.")}
-        onCancel={() => run(() => companionApi.cancelPrediction(), "Prediction cancelled.")}
-      />
-
       <EventsCard events={data.events} />
 
-      <details className="settings-disclosure">
-        <summary>Settings</summary>
+      <div className="settings-section">
         <label className="poll-setting">
           <span>Detection polling — higher is lighter on your PC</span>
           <div className="range-row">
@@ -188,6 +190,8 @@ export function PredictionsDashboard() {
             <strong>{pollInterval}s</strong>
           </div>
         </label>
+      </div>
+        </div>
       </details>
     </section>
   );

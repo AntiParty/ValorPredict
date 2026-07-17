@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { companionApi } from "../../api";
-import type { DashboardData } from "../../types";
+import type { DashboardData, PredictionSession } from "../../types";
 import { PredictionsDashboard } from "./PredictionsDashboard";
 
 vi.mock("../../api", () => ({
@@ -52,6 +52,26 @@ const dashboard: DashboardData = {
   developmentMode: false,
 };
 
+const liveSession: PredictionSession = {
+  id: 7,
+  twitch_user_id: "42",
+  status: "prediction_open",
+  twitch_prediction_id: "prediction-7",
+  outcome_a_label: "Win",
+  outcome_b_label: "Loss",
+  title: "Will test_streamer win?",
+  started_at: "2026-07-16T20:00:00Z",
+  resolved_at: null,
+  result: null,
+  channel_points_wagered: 0,
+  created_at: "2026-07-16T20:00:00Z",
+  updated_at: "2026-07-16T20:00:00Z",
+};
+
+async function openMore() {
+  fireEvent.click(await screen.findByText("More"));
+}
+
 describe("prediction dashboard safeguards", () => {
   beforeEach(() => {
     vi.mocked(companionApi.getDashboard).mockResolvedValue(dashboard);
@@ -67,6 +87,7 @@ describe("prediction dashboard safeguards", () => {
 
   it("does not offer a ready test action when Competitive is disabled", async () => {
     render(<PredictionsDashboard />);
+    await openMore();
 
     const button = await screen.findByRole("button", {
       name: "Enable Competitive to test",
@@ -77,6 +98,7 @@ describe("prediction dashboard safeguards", () => {
 
   it("persists one settings value after a slider gesture", async () => {
     render(<PredictionsDashboard />);
+    await openMore();
     const slider = await screen.findByRole("slider", {
       name: "Detection polling interval",
     });
@@ -95,6 +117,7 @@ describe("prediction dashboard safeguards", () => {
   it("marks the draft value unsaved when persistence fails", async () => {
     vi.mocked(companionApi.saveSettings).mockRejectedValue(new Error("disk full"));
     render(<PredictionsDashboard />);
+    await openMore();
     const slider = await screen.findByRole("slider", {
       name: "Detection polling interval",
     });
@@ -104,5 +127,38 @@ describe("prediction dashboard safeguards", () => {
 
     expect(await screen.findByText(/25s not saved/i)).toBeVisible();
     expect(slider).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("does not render an empty current-prediction card", async () => {
+    render(<PredictionsDashboard />);
+
+    await screen.findByText("Prediction presets");
+    expect(screen.queryByText("Current prediction")).not.toBeInTheDocument();
+    expect(screen.queryByText("Waiting for a match")).not.toBeInTheDocument();
+  });
+
+  it("keeps live prediction resolution controls visible", async () => {
+    vi.mocked(companionApi.getDashboard).mockResolvedValue({
+      ...dashboard,
+      activeSession: liveSession,
+    });
+    render(<PredictionsDashboard />);
+
+    expect(await screen.findByText("Current prediction")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Resolve.*Win/i }),
+    ).toBeVisible();
+  });
+
+  it("keeps occasional tools inside More", async () => {
+    render(<PredictionsDashboard />);
+
+    const more = await screen.findByText("More");
+    expect(screen.getByText("Recent prediction activity")).not.toBeVisible();
+    fireEvent.click(more);
+    expect(screen.getByText("Recent prediction activity")).toBeVisible();
+    expect(
+      screen.getByRole("slider", { name: "Detection polling interval" }),
+    ).toBeVisible();
   });
 });

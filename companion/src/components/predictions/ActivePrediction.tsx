@@ -11,6 +11,8 @@ interface Props {
 export function ActivePrediction({ activeSession, busy, onResolve, onCancel }: Props) {
   const active = activeSession?.status === "prediction_open";
 
+  if (!active || !activeSession) return null;
+
   return (
     <section className={`card active-card ${active ? "is-live" : ""}`}>
       <div className="preset-head">
