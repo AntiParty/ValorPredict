@@ -27,7 +27,7 @@ The connected workspace uses this order:
 3. An attention message only when Twitch, monitoring, or detection needs action.
 4. Live prediction controls visually attached to the primary status area when a prediction is open. No empty prediction card is shown when idle.
 5. Two simple preset rows: Competitive and Custom.
-6. One collapsed **More** disclosure containing test prediction, recent activity, polling settings, and development-only diagnostics.
+6. One collapsed **More** disclosure containing test prediction, recent activity, and polling settings. Development builds add one adjacent collapsed **Diagnostics** disclosure.
 
 The default healthy dashboard should read as “status, presets, done.”
 
@@ -76,7 +76,8 @@ The single collapsed **More** section contains:
 - Send test prediction action and its safety explanation.
 - Recent prediction activity.
 - Detection polling setting.
-- Detector telemetry and logs in development builds only, inside a nested Diagnostics disclosure.
+
+Development builds add an adjacent collapsed **Diagnostics** disclosure containing detector telemetry and logs. Release builds do not render it.
 
 Opening More must not change polling behavior or trigger extra requests. It only changes presentation.
 
@@ -111,7 +112,7 @@ Implementation follows test-first changes for observable behavior:
 
 - Idle predictions do not render a standalone empty card.
 - Live prediction controls appear directly after the primary status area.
-- Test prediction, activity, settings, and diagnostics are hidden until More opens.
+- Test prediction, activity, and settings are hidden until More opens; development diagnostics remain hidden until Diagnostics opens.
 - Preset toggles and edit behavior remain available.
 - Existing polling and settings-save tests continue to pass.
 
