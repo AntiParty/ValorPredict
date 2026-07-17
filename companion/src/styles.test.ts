@@ -12,4 +12,12 @@ describe("desktop layout constraints", () => {
   it("provides a visible keyboard focus treatment", () => {
     expect(styles).toContain(":focus-visible");
   });
+
+  it("uses a solid minimal workspace without decorative viewport layers", () => {
+    expect(styles).toMatch(/body\s*\{[^}]*background:\s*#090a0c/s);
+    expect(styles).not.toContain("body::before");
+    expect(styles).not.toContain("body::after");
+    expect(styles).toContain(".more-disclosure");
+    expect(styles).toContain(".diagnostics-disclosure");
+  });
 });

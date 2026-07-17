@@ -34,48 +34,11 @@
 }
 
 body {
-  position: relative;
   min-width: 560px;
   min-height: 100vh;
   margin: 0;
-  background: linear-gradient(180deg, #0c0d12 0%, var(--bg) 42%, var(--bg-deep) 100%);
+  background: #090a0c;
   -webkit-font-smoothing: antialiased;
-}
-
-/* Atmosphere: top red glow + faint coordinate grid, pinned to the viewport. */
-body::before {
-  position: fixed;
-  z-index: -2;
-  inset: 0;
-  background:
-    radial-gradient(circle at 50% -6%, rgba(255, 70, 85, 0.1), transparent 30rem),
-    linear-gradient(rgba(255, 255, 255, 0.013) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.013) 1px, transparent 1px);
-  background-size: auto, 82px 82px, 82px 82px;
-  content: "";
-  pointer-events: none;
-  transform: translateZ(0);
-}
-
-/* Starfield: a faint hand-scattered constellation that mirrors the marketing site. */
-body::after {
-  position: fixed;
-  z-index: -1;
-  inset: 0;
-  background-image:
-    radial-gradient(1.6px 1.6px at 8% 14%, rgba(255, 255, 255, 0.9), transparent 60%),
-    radial-gradient(1.3px 1.3px at 19% 38%, rgba(255, 255, 255, 0.62), transparent 60%),
-    radial-gradient(1.5px 1.5px at 34% 64%, rgba(255, 255, 255, 0.82), transparent 60%),
-    radial-gradient(1.2px 1.2px at 54% 11%, rgba(255, 255, 255, 0.68), transparent 60%),
-    radial-gradient(1.8px 1.8px at 68% 73%, rgba(255, 175, 182, 0.78), transparent 60%),
-    radial-gradient(1.4px 1.4px at 81% 58%, rgba(255, 255, 255, 0.72), transparent 60%),
-    radial-gradient(1.6px 1.6px at 93% 78%, rgba(255, 255, 255, 0.8), transparent 60%),
-    radial-gradient(1.2px 1.2px at 24% 88%, rgba(255, 255, 255, 0.58), transparent 60%);
-  background-repeat: no-repeat;
-  content: "";
-  opacity: 0.6;
-  pointer-events: none;
-  transform: translateZ(0);
 }
 
 button,
@@ -1872,5 +1835,204 @@ summary:focus-visible {
 
   .events time {
     grid-column: 2;
+  }
+}
+
+/* Minimal connected workspace. The status panel is the only dominant surface;
+   presets and occasional tools are organized by spacing and hairline rules. */
+.companion-shell {
+  display: flex;
+  width: min(920px, calc(100% - 48px));
+  flex-direction: column;
+  padding: 24px 0 40px;
+}
+
+.companion-header {
+  order: 0;
+  margin-bottom: 32px;
+}
+
+.monitor-section {
+  display: contents;
+}
+
+.monitor-section > .notice {
+  order: 1;
+}
+
+.monitor-section > .status-card {
+  order: 2;
+  min-height: 0;
+  margin-bottom: 12px;
+  padding: 28px;
+  border: 1px solid #26282d;
+  border-radius: 18px;
+  background: #111216;
+  box-shadow: none;
+}
+
+.status-card__main h1 {
+  color: #f3f2ef;
+  background: none;
+  -webkit-text-fill-color: initial;
+}
+
+.status-card__main > p {
+  max-width: 460px;
+}
+
+.primary-action,
+.primary-action:hover:not(:disabled) {
+  box-shadow: none;
+  transform: none;
+}
+
+.status-strip {
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid #26282d;
+  border-radius: 0;
+  background: transparent;
+}
+
+.health-banners {
+  order: 3;
+  margin-bottom: 16px;
+}
+
+.health-banner {
+  border-color: #26282d;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.predictions-panel {
+  order: 4;
+  margin: 8px 0 0;
+}
+
+.predictions-panel > .panel-heading {
+  margin: 0 0 10px;
+}
+
+.panel-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.quiet-count {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.preset-list {
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid #26282d;
+}
+
+.preset-row,
+.preset-row.is-on {
+  padding: 15px 2px;
+  border: 0;
+  border-bottom: 1px solid #26282d;
+  border-radius: 0;
+  background: transparent;
+}
+
+.preset-row__title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.active-card {
+  margin: -1px 0 22px;
+  padding: 22px 28px;
+  border: 1px solid rgba(255, 70, 85, 0.32);
+  border-radius: 18px;
+  background: #111216;
+}
+
+.active-card .preset-head {
+  margin-bottom: 12px;
+}
+
+.more-disclosure,
+.diagnostics-disclosure {
+  border: 0;
+  border-bottom: 1px solid #26282d;
+  background: transparent;
+}
+
+.more-disclosure {
+  margin-top: 14px;
+}
+
+.diagnostics-disclosure {
+  order: 5;
+  margin-top: 0;
+}
+
+.more-disclosure summary,
+.diagnostics-disclosure summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  color: var(--muted-bright);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.more-content {
+  padding: 6px 0 22px;
+}
+
+.test-row {
+  margin: 0;
+  padding: 16px 0;
+  border: 0;
+  border-bottom: 1px solid #26282d;
+  border-radius: 0;
+}
+
+.events-card {
+  padding: 20px 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-section {
+  padding: 18px 0 0;
+  border-top: 1px solid #26282d;
+}
+
+.settings-section .poll-setting {
+  margin: 0;
+  padding: 0;
+}
+
+.developer-zone {
+  margin: 0;
+  padding: 16px 0 24px;
+  border-top: 0;
+}
+
+.developer-zone .status-card {
+  padding: 13px;
+  border-radius: 8px;
+  background: #111216;
+}
+
+@media (max-width: 700px) {
+  .companion-shell {
+    width: calc(100% - 28px);
+  }
+
+  .monitor-section > .status-card,
+  .active-card {
+    padding: 22px 20px;
   }
 }

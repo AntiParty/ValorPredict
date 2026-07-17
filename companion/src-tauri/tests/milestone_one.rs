@@ -60,3 +60,12 @@ fn monitoring_auto_starts_when_the_preference_was_enabled() {
     settings.monitoring_enabled = true;
     assert!(should_auto_start_monitoring(&settings));
 }
+
+#[test]
+fn configured_and_rebuilt_windows_share_minimum_size() {
+    let config = include_str!("../tauri.conf.json");
+    let window_builder = include_str!("../src/lib.rs");
+    assert!(config.contains(r#""minWidth": 560"#));
+    assert!(config.contains(r#""minHeight": 640"#));
+    assert!(window_builder.contains(".min_inner_size(560.0, 640.0)"));
+}

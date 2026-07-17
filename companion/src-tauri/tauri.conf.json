@@ -15,8 +15,8 @@
         "title": "ValorPredict",
         "width": 1060,
         "height": 800,
-        "minWidth": 760,
-        "minHeight": 680,
+        "minWidth": 560,
+        "minHeight": 640,
         "resizable": true
       }
     ],

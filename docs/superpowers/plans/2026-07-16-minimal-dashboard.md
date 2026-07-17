@@ -371,8 +371,8 @@ Add to `milestone_one.rs`:
 fn configured_and_rebuilt_windows_share_minimum_size() {
     let config = include_str!("../tauri.conf.json");
     let window_builder = include_str!("../src/lib.rs");
-    assert!(config.contains(r#"\"minWidth\": 560"#));
-    assert!(config.contains(r#"\"minHeight\": 640"#));
+    assert!(config.contains(r#""minWidth": 560"#));
+    assert!(config.contains(r#""minHeight": 640"#));
     assert!(window_builder.contains(".min_inner_size(560.0, 640.0)"));
 }
 ```
