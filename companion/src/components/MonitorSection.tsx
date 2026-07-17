@@ -97,7 +97,7 @@ export function MonitorSection({ user, onReconnect }: Props) {
           <h1>{friendlyState(status)}</h1>
           <p>
             {status.monitoring
-              ? "You can close this window — detection keeps running from the system tray. Reopen it any time from the tray icon."
+              ? "Monitoring runs in the tray while you play."
               : "Start monitoring to detect supported Valorant matches and open predictions automatically."}
           </p>
           <button
@@ -114,8 +114,10 @@ export function MonitorSection({ user, onReconnect }: Props) {
 
         <dl className="status-strip">
           <div>
-            <dt>Mode</dt>
-            <dd className={status.gameMode !== "unknown" ? "good" : ""}>{modeLabel}</dd>
+            <dt>Valorant</dt>
+            <dd className={status.valorantRunning ? "good" : ""}>
+              {status.valorantRunning ? "Running" : "Not running"}
+            </dd>
           </div>
           <div>
             <dt>State</dt>
@@ -124,10 +126,8 @@ export function MonitorSection({ user, onReconnect }: Props) {
             </dd>
           </div>
           <div>
-            <dt>Cooldown</dt>
-            <dd className={status.cooldownRemainingSeconds > 0 ? "live" : ""}>
-              {status.cooldownRemainingSeconds}s
-            </dd>
+            <dt>Mode</dt>
+            <dd className={status.gameMode !== "unknown" ? "good" : ""}>{modeLabel}</dd>
           </div>
         </dl>
       </section>
@@ -145,7 +145,9 @@ export function MonitorSection({ user, onReconnect }: Props) {
       />
 
       {developmentMode && (
-        <section className="developer-zone">
+        <details className="diagnostics-disclosure">
+          <summary>Diagnostics</summary>
+          <section className="developer-zone">
           <div className="developer-heading">
             <span>Detector telemetry</span>
             <p>Raw detection signals and sanitized runtime logs.</p>
@@ -173,8 +175,9 @@ export function MonitorSection({ user, onReconnect }: Props) {
               Clear Logs
             </button>
           </div>
-          <LogPanel logs={status.logs} onClear={() => run(companionApi.clearLogs)} />
-        </section>
+            <LogPanel logs={status.logs} onClear={() => run(companionApi.clearLogs)} />
+          </section>
+        </details>
       )}
     </section>
   );
