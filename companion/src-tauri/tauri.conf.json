@@ -30,7 +30,7 @@
     "publisher": "AntiParty",
     "copyright": "Copyright © 2026 AntiParty",
     "shortDescription": "Automatic Twitch predictions for Valorant matches",
-    "longDescription": "ValorPredict automatically opens Twitch Channel Points Predictions when your Valorant match starts and resolves them when it ends. Free and self-contained — your Twitch credentials never leave your PC.",
+    "longDescription": "ValorPredict automatically opens Twitch Channel Points Predictions when your Valorant match starts and resolves them when it ends. Free and local-first — no ValorPredict server, account, or telemetry upload.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

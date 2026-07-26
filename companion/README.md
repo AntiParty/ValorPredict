@@ -2,9 +2,9 @@
 
 Free Windows desktop app that automatically opens **Twitch Channel Points
 Predictions** when your Valorant match starts — and resolves them from the
-match result when it ends. Everything runs locally on your PC: Twitch OAuth,
-the prediction lifecycle, and the SQLite store live inside the app. There is
-no hosted service, no account, and no fee.
+match result when it ends. Detection, prediction coordination, and storage run
+locally on your PC, while the app connects directly to Riot and Twitch as
+needed. There is no ValorPredict-hosted service, ValorPredict account, or fee.
 
 > ValorPredict isn't endorsed by Riot Games and doesn't reflect the views or
 > opinions of Riot Games or anyone officially involved in producing or managing
@@ -12,8 +12,8 @@ no hosted service, no account, and no fee.
 
 ## Install
 
-Download the latest installer from
-[GitHub Releases](https://github.com/AntiParty/ValorPredict/releases) and run it.
+Download the installer from the
+[latest GitHub release](https://github.com/AntiParty/ValorPredict/releases/latest) and run it.
 
 The installer is not code-signed, so Windows SmartScreen may warn on first
 run — choose **More info → Run anyway**. If you'd rather not trust a binary,
@@ -21,8 +21,9 @@ build from source (below); it's the same code.
 
 ## Set up (one time, ~3 minutes)
 
-Each streamer registers their **own** Twitch application, so your credentials
-never touch anyone else's server:
+Each streamer registers their **own** Twitch application. Credentials are
+stored locally and sent only to Twitch as required for OAuth; there is no
+ValorPredict credential server:
 
 1. Sign in to the [Twitch Developer Console](https://dev.twitch.tv/console/apps)
    and choose **Register Your Application**.
@@ -61,13 +62,15 @@ identify normalize to `unknown` and are ignored.
 - Read Valorant memory, inject into the game, or hook functions.
 - Sniff network packets or bypass Vanguard.
 - Automate gameplay, agent selection, chat, or match actions.
-- Send your Riot tokens, lockfile password, raw MatchIDs, or Twitch
-  credentials anywhere. There is no telemetry.
+- Send Riot credentials or match data to ValorPredict, Twitch, analytics
+  providers, or unrelated third parties. There is no telemetry upload.
 
 Detection is read-only: the app reads the local Riot Client lockfile and calls
-the same local HTTP endpoints the client itself exposes. The lockfile password,
-Riot tokens, and raw MatchIDs never leave the Rust process; MatchIDs are
-SHA-256 hashed before they appear in status or logs.
+local Riot Client endpoints plus Riot-owned game services. The lockfile
+password is used only on loopback; Riot session tokens are held in memory and
+sent only to Riot-owned services for read-only requests. Raw MatchIDs stay in
+the Rust backend and are SHA-256 hashed before they appear in status or logs.
+Twitch OAuth and prediction requests go directly to Twitch.
 
 ## Build from source
 
