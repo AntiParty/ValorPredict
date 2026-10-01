@@ -1,8 +1,9 @@
-import type { DetectionStatus, SafeUser } from "../../types";
+import type { DetectionStatus } from "../../types";
 
 interface Props {
   status: DetectionStatus;
-  user: SafeUser | null;
+  /** The backend couldn't refresh Twitch: the saved sign-in no longer works. */
+  reauthRequired: boolean;
   onStartMonitoring: () => void;
   onReconnect: () => void;
 }
@@ -15,21 +16,15 @@ interface Banner {
   onAction?: () => void;
 }
 
-function twitchExpired(user: SafeUser | null): boolean {
-  if (!user?.token_expires_at) return false;
-  const expires = Date.parse(user.token_expires_at);
-  // Only flag once actually expired — if the backend refreshed the token this
-  // value would be in the future, so a past value means a real reconnect need.
-  return Number.isFinite(expires) && expires <= Date.now();
-}
-
 // Plain-language nudges shown under the status card, only when something needs
 // attention. When all is well, nothing renders and the status card's
 // "Watching Valorant" is the all-clear.
-export function HealthBanners({ status, user, onStartMonitoring, onReconnect }: Props) {
+export function HealthBanners({ status, reauthRequired, onStartMonitoring, onReconnect }: Props) {
   const banners: Banner[] = [];
 
-  if (twitchExpired(user)) {
+  // Driven by the backend: an access token past its timestamp is normal (it is
+  // refreshed on next use), so only a refused refresh token means "reconnect".
+  if (reauthRequired) {
     banners.push({
       id: "twitch",
       tone: "warn",

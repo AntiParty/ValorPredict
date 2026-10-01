@@ -4,7 +4,7 @@ import { companionApi } from "../api";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useWindowVisible } from "../hooks/useWindowVisible";
 import { HealthBanners } from "./predictions/HealthBanners";
-import type { DetectionStatus, SafeUser } from "../types";
+import type { DetectionStatus } from "../types";
 import { LogPanel } from "./LogPanel";
 import { StatusGrid } from "./StatusGrid";
 
@@ -45,11 +45,12 @@ function friendlyState(status: DetectionStatus) {
 }
 
 interface Props {
-  user: SafeUser | null;
+  /** Own-app sign-in only: hosted accounts get a reconnect card in App instead. */
+  reauthRequired?: boolean;
   onReconnect: () => void;
 }
 
-export function MonitorSection({ user, onReconnect }: Props) {
+export function MonitorSection({ reauthRequired = false, onReconnect }: Props) {
   const [status, setStatus] = useState(emptyStatus);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -134,7 +135,7 @@ export function MonitorSection({ user, onReconnect }: Props) {
 
       <HealthBanners
         status={status}
-        user={user}
+        reauthRequired={reauthRequired}
         onStartMonitoring={() => run(companionApi.startMonitoring)}
         onReconnect={() =>
           run(async () => {

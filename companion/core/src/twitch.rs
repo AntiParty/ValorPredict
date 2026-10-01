@@ -14,6 +14,8 @@ use url::Url;
 const SCOPES: &str = "channel:manage:predictions channel:read:predictions";
 const DEFAULT_ID_BASE: &str = "https://id.twitch.tv";
 const DEFAULT_API_BASE: &str = "https://api.twitch.tv";
+/// The broker rejects requests whose User-Agent doesn't start with `ValorPredict/`.
+const BROKER_USER_AGENT: &str = concat!("ValorPredict/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Error)]
 pub enum TwitchError {
@@ -27,20 +29,40 @@ pub enum TwitchError {
     },
     #[error("{0}")]
     Empty(&'static str),
+    /// Twitch (or the broker) refused the refresh token: the user must sign in again.
+    #[error("Your Twitch sign-in has expired. Reconnect Twitch to continue.")]
+    ReauthRequired,
+    /// The connection code was rejected. The message is safe to show the user.
+    #[error("{0}")]
+    BadCode(String),
 }
 
 pub type Result<T> = std::result::Result<T, TwitchError>;
 
+/// Who holds the Twitch Client Secret and therefore performs token refreshes.
+#[derive(Debug, Clone)]
+pub enum TokenAuthority {
+    /// The user registered their own Twitch application; the secret is stored locally
+    /// and the app talks to Twitch directly.
+    OwnApp,
+    /// ValorPredict's shared application. The secret stays on the broker (the `auth/`
+    /// service), which the app calls to redeem a connection code and to refresh.
+    Hosted { broker_base_url: String },
+}
+
 #[derive(Debug, Clone)]
 pub struct TwitchConfig {
     pub client_id: String,
+    /// Empty for [`TokenAuthority::Hosted`]: the app never holds the shared secret.
     pub client_secret: String,
     pub redirect_uri: String,
     pub id_base_url: String,
     pub api_base_url: String,
+    pub authority: TokenAuthority,
 }
 
 impl TwitchConfig {
+    /// The user's own Twitch application (Advanced path).
     pub fn new(client_id: String, client_secret: String, redirect_uri: String) -> Self {
         Self {
             client_id,
@@ -48,6 +70,21 @@ impl TwitchConfig {
             redirect_uri,
             id_base_url: DEFAULT_ID_BASE.to_string(),
             api_base_url: DEFAULT_API_BASE.to_string(),
+            authority: TokenAuthority::OwnApp,
+        }
+    }
+
+    /// ValorPredict's shared application, reached through the broker.
+    pub fn hosted(client_id: String, broker_base_url: String) -> Self {
+        Self {
+            client_id,
+            client_secret: String::new(),
+            redirect_uri: String::new(),
+            id_base_url: DEFAULT_ID_BASE.to_string(),
+            api_base_url: DEFAULT_API_BASE.to_string(),
+            authority: TokenAuthority::Hosted {
+                broker_base_url: broker_base_url.trim_end_matches('/').to_string(),
+            },
         }
     }
 }
@@ -103,6 +140,9 @@ pub struct CreatePredictionInput {
 #[async_trait::async_trait]
 pub trait TwitchApi: Send + Sync {
     async fn refresh_token(&self, refresh_token: &str) -> Result<TokenResponse>;
+    /// Twitch requires validating the token hourly. `Err(ReauthRequired)` means the
+    /// access token is no longer valid.
+    async fn validate_token(&self, access_token: &str) -> Result<()>;
     async fn create_prediction(
         &self,
         access_token: &str,
@@ -128,6 +168,9 @@ pub trait TwitchApi: Send + Sync {
 impl TwitchApi for TwitchClient {
     async fn refresh_token(&self, refresh_token: &str) -> Result<TokenResponse> {
         TwitchClient::refresh_token(self, refresh_token).await
+    }
+    async fn validate_token(&self, access_token: &str) -> Result<()> {
+        TwitchClient::validate_token(self, access_token).await
     }
     async fn create_prediction(
         &self,
@@ -206,16 +249,94 @@ impl TwitchClient {
     }
 
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<TokenResponse> {
+        match &self.config.authority {
+            TokenAuthority::OwnApp => {
+                let req = self
+                    .http
+                    .post(format!("{}/oauth2/token", self.config.id_base_url))
+                    .query(&[
+                        ("client_id", self.config.client_id.as_str()),
+                        ("client_secret", self.config.client_secret.as_str()),
+                        ("grant_type", "refresh_token"),
+                        ("refresh_token", refresh_token),
+                    ]);
+                match self.send_json("Twitch OAuth", req).await {
+                    // Twitch answers 400 "Invalid refresh token" when it was revoked/expired.
+                    Err(TwitchError::Api { status, message, .. })
+                        if (status == 400 || status == 401)
+                            && message.to_ascii_lowercase().contains("invalid refresh token") =>
+                    {
+                        Err(TwitchError::ReauthRequired)
+                    }
+                    other => other,
+                }
+            }
+            TokenAuthority::Hosted { broker_base_url } => {
+                let req = self
+                    .http
+                    .post(format!("{broker_base_url}/api/refresh"))
+                    .header(reqwest::header::USER_AGENT, BROKER_USER_AGENT)
+                    .json(&serde_json::json!({ "refresh_token": refresh_token }));
+                match self.send_json("ValorPredict sign-in service", req).await {
+                    Err(TwitchError::Api { status: 401, .. }) => Err(TwitchError::ReauthRequired),
+                    other => other,
+                }
+            }
+        }
+    }
+
+    /// Trade a pasted connection code (`vp1_…`) for tokens. Hosted mode only.
+    pub async fn redeem_connection_code(&self, code: &str) -> Result<TokenResponse> {
+        let TokenAuthority::Hosted { broker_base_url } = &self.config.authority else {
+            return Err(TwitchError::Empty(
+                "Connection codes are only used with the hosted sign-in.",
+            ));
+        };
         let req = self
             .http
-            .post(format!("{}/oauth2/token", self.config.id_base_url))
-            .query(&[
-                ("client_id", self.config.client_id.as_str()),
-                ("client_secret", self.config.client_secret.as_str()),
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh_token),
-            ]);
-        self.send_json("Twitch OAuth", req).await
+            .post(format!("{broker_base_url}/api/redeem"))
+            .header(reqwest::header::USER_AGENT, BROKER_USER_AGENT)
+            .json(&serde_json::json!({ "code": code }));
+        match self.send_json("ValorPredict sign-in service", req).await {
+            Err(TwitchError::Api { status: 410, .. }) => Err(TwitchError::BadCode(
+                "That code expired — click Connect Twitch again.".into(),
+            )),
+            Err(TwitchError::Api { status: 400, .. }) => Err(TwitchError::BadCode(
+                "That doesn't look like a valid connection code. Click Connect Twitch and copy a fresh one."
+                    .into(),
+            )),
+            other => other,
+        }
+    }
+
+    /// `GET /oauth2/validate`. Twitch asks apps to call this hourly.
+    pub async fn validate_token(&self, access_token: &str) -> Result<()> {
+        let response = self
+            .http
+            .get(format!("{}/oauth2/validate", self.config.id_base_url))
+            .header(reqwest::header::AUTHORIZATION, format!("OAuth {access_token}"))
+            .send()
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else if status.as_u16() == 401 {
+            Err(TwitchError::ReauthRequired)
+        } else {
+            Err(TwitchError::Api {
+                label: "Twitch OAuth".into(),
+                status: status.as_u16(),
+                message: status.canonical_reason().unwrap_or("Unknown error").into(),
+            })
+        }
+    }
+
+    /// Login page on the broker that the user opens in their browser. Hosted mode only.
+    pub fn hosted_login_url(&self) -> Option<String> {
+        match &self.config.authority {
+            TokenAuthority::Hosted { broker_base_url } => Some(format!("{broker_base_url}/api/login")),
+            TokenAuthority::OwnApp => None,
+        }
     }
 
     pub async fn get_current_user(&self, access_token: &str) -> Result<TwitchUser> {
@@ -592,5 +713,172 @@ mod tests {
             }
             other => panic!("expected Api error, got {other:?}"),
         }
+    }
+
+    fn has_valorpredict_user_agent(req: &HttpMockRequest) -> bool {
+        req.headers.as_ref().is_some_and(|headers| {
+            headers.iter().any(|(name, value)| {
+                name.eq_ignore_ascii_case("user-agent") && value.starts_with("ValorPredict/")
+            })
+        })
+    }
+
+    fn hosted_for(server: &MockServer) -> TwitchClient {
+        let mut config = TwitchConfig::hosted("shared-id".into(), format!("{}/", server.base_url()));
+        config.id_base_url = server.base_url();
+        config.api_base_url = server.base_url();
+        TwitchClient::new(config)
+    }
+
+    #[tokio::test]
+    async fn hosted_refresh_goes_to_broker_without_a_secret() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/api/refresh")
+                    .header_exists("content-type")
+                    .matches(has_valorpredict_user_agent)
+                    .json_body(json!({ "refresh_token": "old-refresh" }));
+                then.status(200).json_body(json!({
+                    "access_token": "new-access",
+                    "refresh_token": "new-refresh",
+                    "expires_in": 14000
+                }));
+            })
+            .await;
+
+        let token = hosted_for(&server).refresh_token("old-refresh").await.unwrap();
+        mock.assert_async().await;
+        assert_eq!(token.access_token, "new-access");
+        assert_eq!(token.refresh_token.as_deref(), Some("new-refresh"));
+    }
+
+    #[tokio::test]
+    async fn hosted_refresh_maps_401_to_reauth_and_5xx_to_api_error() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api/refresh").json_body(json!({ "refresh_token": "revoked" }));
+                then.status(401).json_body(json!({ "error": "reauth" }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api/refresh").json_body(json!({ "refresh_token": "outage" }));
+                then.status(502).json_body(json!({ "error": "upstream" }));
+            })
+            .await;
+        let client = hosted_for(&server);
+
+        assert!(matches!(
+            client.refresh_token("revoked").await.unwrap_err(),
+            TwitchError::ReauthRequired
+        ));
+        // An outage must NOT look like a revoked token (that would sign the user out).
+        assert!(matches!(
+            client.refresh_token("outage").await.unwrap_err(),
+            TwitchError::Api { status: 502, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn own_app_refresh_maps_invalid_refresh_token_to_reauth() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/oauth2/token");
+                then.status(400)
+                    .json_body(json!({ "status": 400, "message": "Invalid refresh token" }));
+            })
+            .await;
+        assert!(matches!(
+            client_for(&server).refresh_token("x").await.unwrap_err(),
+            TwitchError::ReauthRequired
+        ));
+    }
+
+    #[tokio::test]
+    async fn redeems_connection_code() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/api/redeem")
+                    .matches(has_valorpredict_user_agent)
+                    .json_body(json!({ "code": "vp1_abc" }));
+                then.status(200).json_body(json!({
+                    "access_token": "a", "refresh_token": "r", "expires_in": 13000
+                }));
+            })
+            .await;
+        let token = hosted_for(&server).redeem_connection_code("vp1_abc").await.unwrap();
+        mock.assert_async().await;
+        assert_eq!(token.access_token, "a");
+        assert_eq!(token.expires_in, 13000);
+    }
+
+    #[tokio::test]
+    async fn redeem_errors_have_friendly_messages() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api/redeem").json_body(json!({ "code": "vp1_old" }));
+                then.status(410).json_body(json!({ "error": "expired" }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api/redeem").json_body(json!({ "code": "vp1_bad" }));
+                then.status(400).json_body(json!({ "error": "invalid" }));
+            })
+            .await;
+        let client = hosted_for(&server);
+
+        let expired = client.redeem_connection_code("vp1_old").await.unwrap_err();
+        assert_eq!(expired.to_string(), "That code expired — click Connect Twitch again.");
+        let bad = client.redeem_connection_code("vp1_bad").await.unwrap_err();
+        assert!(matches!(bad, TwitchError::BadCode(_)));
+        // Neither message echoes the code back.
+        assert!(!expired.to_string().contains("vp1_"));
+        assert!(!bad.to_string().contains("vp1_"));
+    }
+
+    #[tokio::test]
+    async fn redeem_is_refused_without_hosted_authority() {
+        let server = MockServer::start_async().await;
+        assert!(client_for(&server).redeem_connection_code("vp1_x").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn validates_token_with_oauth_scheme() {
+        let server = MockServer::start_async().await;
+        let ok = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/oauth2/validate").header("Authorization", "OAuth good");
+                then.status(200).json_body(json!({ "client_id": "x", "expires_in": 100 }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/oauth2/validate").header("Authorization", "OAuth bad");
+                then.status(401).json_body(json!({ "status": 401, "message": "invalid access token" }));
+            })
+            .await;
+        let client = hosted_for(&server);
+        client.validate_token("good").await.unwrap();
+        ok.assert_async().await;
+        assert!(matches!(
+            client.validate_token("bad").await.unwrap_err(),
+            TwitchError::ReauthRequired
+        ));
+    }
+
+    #[test]
+    fn hosted_login_url_trims_trailing_slash() {
+        let c = TwitchClient::new(TwitchConfig::hosted("id".into(), "https://x.example/".into()));
+        assert_eq!(c.hosted_login_url().as_deref(), Some("https://x.example/api/login"));
+        let own = TwitchClient::new(TwitchConfig::new("a".into(), "b".into(), "c".into()));
+        assert!(own.hosted_login_url().is_none());
     }
 }

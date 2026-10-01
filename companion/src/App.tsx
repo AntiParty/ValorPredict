@@ -4,6 +4,7 @@ import { companionApi } from "./api";
 import { BootstrapError } from "./components/BootstrapError";
 import { MonitorSection } from "./components/MonitorSection";
 import { Brand } from "./components/predictions/Brand";
+import { HostedConnectStep } from "./components/predictions/HostedConnectStep";
 import { OnboardingWizard } from "./components/predictions/OnboardingWizard";
 import { PredictionsDashboard } from "./components/predictions/PredictionsDashboard";
 import { friendlyError, type UserFacingError } from "./errors";
@@ -35,7 +36,14 @@ export function App() {
       if (previewMode) {
         setAuth({
           status: "ready",
-          me: { user: null, configured: false, redirectUri: FALLBACK_REDIRECT },
+          me: {
+            user: null,
+            configured: false,
+            redirectUri: FALLBACK_REDIRECT,
+            authMode: "hosted",
+            hostedAvailable: true,
+            reauthRequired: false,
+          },
         });
       } else {
         setAuth({
@@ -91,7 +99,16 @@ export function App() {
         </div>
       </header>
 
-      <MonitorSection user={me.user} onReconnect={loadMe} />
+      {me.reauthRequired && me.authMode === "hosted" && (
+        <section className="card wizard-card reconnect-card">
+          <HostedConnectStep reconnect onConnected={() => loadMe().catch(() => undefined)} />
+        </section>
+      )}
+
+      <MonitorSection
+        reauthRequired={me.reauthRequired && me.authMode === "own"}
+        onReconnect={loadMe}
+      />
       <PredictionsDashboard />
     </main>
   );

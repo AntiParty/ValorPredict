@@ -490,7 +490,7 @@ pub fn push_log(status: &Arc<Mutex<ValorantDetectionStatus>>, level: &str, messa
 
 fn sanitize_log(message: &str) -> String {
     let mut sanitized = message.to_string();
-    for marker in ["vap_", "Bearer ", "Basic "] {
+    for marker in ["vap_", "vp1_", "Bearer ", "Basic "] {
         if let Some(index) = sanitized.find(marker) {
             sanitized.truncate(index);
             sanitized.push_str("[secret redacted]");

@@ -42,7 +42,7 @@ describe("minimal monitor status", () => {
   });
 
   it("shows essential facts and collapses development diagnostics", async () => {
-    render(<MonitorSection user={null} onReconnect={vi.fn()} />);
+    render(<MonitorSection onReconnect={vi.fn()} />);
 
     expect(
       await screen.findByRole("heading", { name: "Waiting for Valorant" }),

@@ -107,6 +107,12 @@ export interface MeResponse {
   user: SafeUser | null;
   configured: boolean;
   redirectUri: string;
+  /** "hosted" = ValorPredict's shared Twitch app; "own" = the streamer's own application. */
+  authMode: "hosted" | "own";
+  /** Whether this build ships with the shared Twitch app (hosted sign-in). */
+  hostedAvailable: boolean;
+  /** Twitch refused the saved sign-in; the streamer has to reconnect. */
+  reauthRequired: boolean;
 }
 
 export interface DashboardData {

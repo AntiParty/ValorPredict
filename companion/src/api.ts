@@ -58,4 +58,11 @@ export const companionApi = {
       { gameMode },
     ),
   connectTwitch: () => invoke<SafeUser>("connect_twitch"),
+  // Hosted sign-in. The connection code is read from the clipboard in Rust and never
+  // passes through this webview; the manual variant exists only as a fallback.
+  startHostedLogin: () => invoke<void>("start_hosted_login"),
+  importConnectionCodeFromClipboard: () =>
+    invoke<SafeUser>("import_connection_code_from_clipboard"),
+  importConnectionCode: (code: string) =>
+    invoke<SafeUser>("import_connection_code", { code }),
 };

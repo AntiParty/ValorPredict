@@ -7,6 +7,7 @@
 // Some methods are only exercised by the Tauri shell; keep them here regardless.
 #![allow(dead_code)]
 
+pub mod connect;
 pub mod db;
 pub mod predictions;
 pub mod twitch;

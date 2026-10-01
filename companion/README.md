@@ -4,7 +4,9 @@ Free Windows desktop app that automatically opens **Twitch Channel Points
 Predictions** when your Valorant match starts — and resolves them from the
 match result when it ends. Detection, prediction coordination, and storage run
 locally on your PC, while the app connects directly to Riot and Twitch as
-needed. There is no ValorPredict-hosted service, ValorPredict account, or fee.
+needed. There is no ValorPredict account or fee. The only ValorPredict-run piece
+is a small open-source [sign-in service](../auth/README.md) used to connect and
+refresh your Twitch login; it stores nothing.
 
 > ValorPredict isn't endorsed by Riot Games and doesn't reflect the views or
 > opinions of Riot Games or anyone officially involved in producing or managing
@@ -19,11 +21,30 @@ The installer is not code-signed, so Windows SmartScreen may warn on first
 run — choose **More info → Run anyway**. If you'd rather not trust a binary,
 build from source (below); it's the same code.
 
-## Set up (one time, ~3 minutes)
+## Set up (one time, ~1 minute)
 
-Each streamer registers their **own** Twitch application. Credentials are
-stored locally and sent only to Twitch as required for OAuth; there is no
-ValorPredict credential server:
+1. Launch ValorPredict and click **Connect Twitch**. Your browser opens Twitch's
+   usual authorization screen.
+2. Approve. The page shows a hidden connection code with a **Copy connection
+   code** button. The code is encrypted, never displayed as text, and expires
+   after 10 minutes.
+3. Back in ValorPredict, click **Paste from clipboard**. The app reads the code
+   itself and clears your clipboard afterwards. (If that fails, **Paste
+   manually** takes it in a masked field.)
+
+No Twitch developer account is needed. Sign-in goes through ValorPredict's
+shared Twitch application: its Client Secret is held by the open-source
+[`auth/`](../auth/README.md) service, which exchanges your sign-in for tokens
+and refreshes them every few hours. It keeps no database and logs no tokens,
+but your tokens pass through it briefly in memory, so you are trusting that
+service in this mode. Predictions themselves go directly between the app and
+Twitch, so they keep working if the service is down.
+
+### Use your own Twitch application instead
+
+Under **Use my own Twitch application** you can register your own app and skip
+the sign-in service entirely. Its credentials are stored locally and sent only
+to Twitch:
 
 1. Sign in to the [Twitch Developer Console](https://dev.twitch.tv/console/apps)
    and choose **Register Your Application**.
@@ -34,8 +55,7 @@ ValorPredict credential server:
    ```
 
 3. Create the app, then copy the **Client ID** and generate a **Client Secret**.
-4. Launch ValorPredict and paste both into the setup screen, then click
-   **Connect Twitch** — a browser opens for the usual Twitch authorization.
+4. Paste both into the setup screen, then click **Connect Twitch**.
 
 The app requests only the `channel:manage:predictions` and
 `channel:read:predictions` scopes. Your account must be eligible for Channel
@@ -70,7 +90,8 @@ local Riot Client endpoints plus Riot-owned game services. The lockfile
 password is used only on loopback; Riot session tokens are held in memory and
 sent only to Riot-owned services for read-only requests. Raw MatchIDs stay in
 the Rust backend and are SHA-256 hashed before they appear in status or logs.
-Twitch OAuth and prediction requests go directly to Twitch.
+Prediction requests go directly to Twitch. Twitch sign-in and token refresh go
+through the sign-in service unless you use your own Twitch application.
 
 ## Build from source
 
@@ -95,9 +116,12 @@ cargo test            # vap_core + companion tests
 
 ## Architecture
 
-- `core/` — `vap_core`: Tauri-independent Twitch OAuth, SQLite store, and
-  prediction lifecycle, so the backend logic can be compiled and tested on its
-  own.
+- `core/` — `vap_core`: Tauri-independent Twitch OAuth, connection-code
+  redemption, SQLite store, and prediction lifecycle, so the backend logic can
+  be compiled and tested on its own.
+- `../auth/` — the stateless Vercel sign-in service (see its README). To point a
+  build at your own deployment, set `VALORPREDICT_TWITCH_CLIENT_ID` and
+  `VALORPREDICT_BROKER_URL` when building.
 - `src-tauri/` — the desktop shell: read-only Riot detection loop, tray, and
   IPC commands that surface `vap_core` to the UI.
 - `src/` — React UI: onboarding wizard, prediction presets, monitoring.

@@ -5,6 +5,7 @@ import { Brand } from "./Brand";
 import { ConnectStep } from "./ConnectStep";
 import { CreateAppStep } from "./CreateAppStep";
 import { CredentialsStep } from "./CredentialsStep";
+import { HostedConnectStep } from "./HostedConnectStep";
 
 const STEPS = ["Create app", "Add keys", "Connect"] as const;
 type SetupStep = "create" | "credentials" | "connect";
@@ -15,15 +16,35 @@ interface Props {
 }
 
 export function OnboardingWizard({ me, onAdvance }: Props) {
-  const [step, setStep] = useState<SetupStep>(
-    me.configured ? "connect" : "create",
-  );
+  // The user's own Twitch application is configured (the Advanced path). The hosted
+  // runtime also reports `configured`, but that means nothing here: it needs no keys.
+  const ownConfigured = me.configured && me.authMode === "own";
+  // Hosted sign-in is the default whenever this build ships with the shared app.
+  const [advanced, setAdvanced] = useState(!me.hostedAvailable || ownConfigured);
+  const [step, setStep] = useState<SetupStep>(ownConfigured ? "connect" : "create");
   const [editingCredentials, setEditingCredentials] = useState(false);
   const stepIndex = step === "create" ? 0 : step === "credentials" ? 1 : 2;
 
   useEffect(() => {
-    if (me.configured && !editingCredentials) setStep("connect");
-  }, [me.configured, editingCredentials]);
+    if (ownConfigured && !editingCredentials) setStep("connect");
+  }, [ownConfigured, editingCredentials]);
+
+  if (!advanced) {
+    return (
+      <main className="companion-shell">
+        <section className="card wizard-card">
+          <Brand />
+          <HostedConnectStep
+            onConnected={onAdvance}
+            onUseOwnApp={() => {
+              setStep("create");
+              setAdvanced(true);
+            }}
+          />
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="companion-shell">
@@ -56,7 +77,7 @@ export function OnboardingWizard({ me, onAdvance }: Props) {
             redirectUri={me.redirectUri}
             onBack={() => {
               setEditingCredentials(false);
-              setStep(me.configured ? "connect" : "create");
+              setStep(ownConfigured ? "connect" : "create");
             }}
             onSaved={() => {
               setEditingCredentials(false);
@@ -73,6 +94,14 @@ export function OnboardingWizard({ me, onAdvance }: Props) {
               setStep("credentials");
             }}
           />
+        )}
+
+        {me.hostedAvailable && !ownConfigured && (
+          <p className="field-note">
+            <button className="link-button" type="button" onClick={() => setAdvanced(false)}>
+              ← Back to simple sign-in
+            </button>
+          </p>
         )}
       </section>
     </main>

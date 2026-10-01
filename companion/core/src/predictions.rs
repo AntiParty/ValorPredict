@@ -23,6 +23,20 @@ pub enum ServiceError {
 
 pub type Result<T> = std::result::Result<T, ServiceError>;
 
+/// `app_config` key set to "1" when Twitch refused our refresh token, meaning the
+/// streamer has to sign in again. Cleared by a successful refresh or reconnect.
+pub const REAUTH_REQUIRED_KEY: &str = "reauth_required";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionHealth {
+    /// The access token is valid.
+    Valid,
+    /// It was invalid but a refresh fixed it.
+    Refreshed,
+    /// The user must reconnect Twitch.
+    ReauthRequired,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Winner {
     A,
@@ -89,7 +103,6 @@ impl PredictionService {
             .create_session(twitch_user_id, &title, &preset.outcome_a, &preset.outcome_b)
             .map_err(|_| ServiceError::Message("A prediction is already active.".into()))?;
 
-        let access_token = self.fresh_access_token(twitch_user_id).await?;
         let input = CreatePredictionInput {
             title: title.clone(),
             outcome_a: preset.outcome_a.clone(),
@@ -97,15 +110,20 @@ impl PredictionService {
             prediction_window: preset.prediction_window.clamp(30, 1800),
         };
 
+        let twitch = &self.twitch;
+        let input_ref = &input;
         let prediction = match self
-            .twitch
-            .create_prediction(&access_token, twitch_user_id, &input)
+            .call_with_token(twitch_user_id, |token| async move {
+                twitch
+                    .create_prediction(&token, twitch_user_id, input_ref)
+                    .await
+            })
             .await
         {
             Ok(prediction) => prediction,
             Err(error) => {
                 self.mark_failed(twitch_user_id, session.id, &error.to_string())?;
-                return Err(ServiceError::Twitch(error));
+                return Err(error);
             }
         };
 
@@ -172,16 +190,20 @@ impl PredictionService {
             }
         };
 
-        let access_token = self.fresh_access_token(twitch_user_id).await?;
+        let twitch = &self.twitch;
+        let (prediction_id_ref, outcome_id_ref) = (&prediction_id, &outcome_id);
         let twitch_prediction = match self
-            .twitch
-            .resolve_prediction(&access_token, twitch_user_id, &prediction_id, &outcome_id)
+            .call_with_token(twitch_user_id, |token| async move {
+                twitch
+                    .resolve_prediction(&token, twitch_user_id, prediction_id_ref, outcome_id_ref)
+                    .await
+            })
             .await
         {
             Ok(prediction) => prediction,
             Err(error) => {
                 self.log_action_error(twitch_user_id, session.id, &error.to_string())?;
-                return Err(ServiceError::Twitch(error));
+                return Err(error);
             }
         };
 
@@ -221,14 +243,18 @@ impl PredictionService {
             ServiceError::Message("The active prediction is missing its Twitch ID.".into())
         })?;
 
-        let access_token = self.fresh_access_token(twitch_user_id).await?;
+        let twitch = &self.twitch;
+        let prediction_id_ref = &prediction_id;
         if let Err(error) = self
-            .twitch
-            .cancel_prediction(&access_token, twitch_user_id, &prediction_id)
+            .call_with_token(twitch_user_id, |token| async move {
+                twitch
+                    .cancel_prediction(&token, twitch_user_id, prediction_id_ref)
+                    .await
+            })
             .await
         {
             self.log_action_error(twitch_user_id, session.id, &error.to_string())?;
-            return Err(ServiceError::Twitch(error));
+            return Err(error);
         }
 
         let cancelled = self.db.update_session(
@@ -249,6 +275,51 @@ impl PredictionService {
         Ok(cancelled)
     }
 
+    /// True when Twitch refused our refresh token and the user must reconnect.
+    pub fn reauth_required(&self) -> Result<bool> {
+        Ok(self.db.get_config(REAUTH_REQUIRED_KEY)?.as_deref() == Some("1"))
+    }
+
+    /// Hourly check (Twitch requires apps to validate tokens). Validates the stored
+    /// access token; if it's no longer valid, tries one refresh. Only a definitive
+    /// "refresh token refused" flags the account for reconnecting: a network error or
+    /// broker outage is returned as `Err` and changes nothing.
+    pub async fn check_session(&self) -> Result<SessionHealth> {
+        let Some(tokens) = self.db.get_tokens()? else {
+            return Err(ServiceError::Message("Twitch user is not connected.".into()));
+        };
+        match self.twitch.validate_token(&tokens.access_token).await {
+            Ok(()) => Ok(SessionHealth::Valid),
+            Err(TwitchError::ReauthRequired) => {
+                match self.force_refresh(&tokens.twitch_user_id).await {
+                    Ok(_) => Ok(SessionHealth::Refreshed),
+                    Err(ServiceError::Twitch(TwitchError::ReauthRequired)) => {
+                        Ok(SessionHealth::ReauthRequired)
+                    }
+                    Err(other) => Err(other),
+                }
+            }
+            Err(other) => Err(other.into()),
+        }
+    }
+
+    /// Run a Twitch call with a fresh access token. If Twitch answers 401 (the token was
+    /// revoked or invalidated early), refresh once and retry once.
+    async fn call_with_token<T, F, Fut>(&self, twitch_user_id: &str, call: F) -> Result<T>
+    where
+        F: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = std::result::Result<T, TwitchError>>,
+    {
+        let token = self.fresh_access_token(twitch_user_id).await?;
+        match call(token).await {
+            Err(TwitchError::Api { status: 401, .. }) => {
+                let token = self.force_refresh(twitch_user_id).await?;
+                Ok(call(token).await?)
+            }
+            other => Ok(other?),
+        }
+    }
+
     /// Return a non-expired access token, refreshing + persisting if needed.
     async fn fresh_access_token(&self, twitch_user_id: &str) -> Result<String> {
         let tokens = self
@@ -265,8 +336,24 @@ impl PredictionService {
         if !needs_refresh {
             return Ok(tokens.access_token);
         }
+        self.force_refresh(twitch_user_id).await
+    }
 
-        let refreshed = self.twitch.refresh_token(&tokens.refresh_token).await?;
+    /// Refresh now and persist the result. A refused refresh token sets the reconnect flag.
+    async fn force_refresh(&self, twitch_user_id: &str) -> Result<String> {
+        let tokens = self
+            .db
+            .get_tokens()?
+            .ok_or_else(|| ServiceError::Message("Twitch user is not connected.".into()))?;
+
+        let refreshed = match self.twitch.refresh_token(&tokens.refresh_token).await {
+            Ok(refreshed) => refreshed,
+            Err(TwitchError::ReauthRequired) => {
+                self.db.set_config(REAUTH_REQUIRED_KEY, "1")?;
+                return Err(TwitchError::ReauthRequired.into());
+            }
+            Err(other) => return Err(other.into()),
+        };
         let new_refresh = refreshed
             .refresh_token
             .clone()
@@ -278,6 +365,7 @@ impl PredictionService {
             &new_refresh,
             &expires_at,
         )?;
+        self.db.set_config(REAUTH_REQUIRED_KEY, "0")?;
         Ok(refreshed.access_token)
     }
 
@@ -333,17 +421,43 @@ mod tests {
     struct FakeTwitch {
         create_should_fail: bool,
         refresh_called: AtomicBool,
+        /// Refresh answers "sign in again".
+        refresh_reauth: bool,
+        /// Refresh fails with a transient (non-auth) error.
+        refresh_outage: bool,
+        /// validate_token answers 401.
+        validate_invalid: bool,
+        /// Number of create_prediction calls that answer 401 before succeeding.
+        create_401s: std::sync::atomic::AtomicU32,
+        create_calls: std::sync::atomic::AtomicU32,
     }
 
     #[async_trait::async_trait]
     impl TwitchApi for FakeTwitch {
         async fn refresh_token(&self, _refresh_token: &str) -> TwitchResult<TokenResponse> {
             self.refresh_called.store(true, Ordering::SeqCst);
+            if self.refresh_reauth {
+                return Err(TwitchError::ReauthRequired);
+            }
+            if self.refresh_outage {
+                return Err(TwitchError::Api {
+                    label: "ValorPredict sign-in service".into(),
+                    status: 502,
+                    message: "Bad Gateway".into(),
+                });
+            }
             Ok(TokenResponse {
                 access_token: "refreshed-access".into(),
                 refresh_token: Some("refreshed-refresh".into()),
                 expires_in: 3600,
             })
+        }
+        async fn validate_token(&self, _access_token: &str) -> TwitchResult<()> {
+            if self.validate_invalid {
+                Err(TwitchError::ReauthRequired)
+            } else {
+                Ok(())
+            }
         }
         async fn create_prediction(
             &self,
@@ -351,6 +465,15 @@ mod tests {
             _broadcaster_id: &str,
             input: &CreatePredictionInput,
         ) -> TwitchResult<Prediction> {
+            self.create_calls.fetch_add(1, Ordering::SeqCst);
+            if self.create_401s.load(Ordering::SeqCst) > 0 {
+                self.create_401s.fetch_sub(1, Ordering::SeqCst);
+                return Err(TwitchError::Api {
+                    label: "Twitch API".into(),
+                    status: 401,
+                    message: "Invalid OAuth token".into(),
+                });
+            }
             if self.create_should_fail {
                 return Err(TwitchError::Api {
                     label: "Twitch API".into(),
@@ -582,5 +705,140 @@ mod tests {
 
         assert!(fake.refresh_called.load(Ordering::SeqCst));
         assert_eq!(db.get_tokens().unwrap().unwrap().access_token, "refreshed-access");
+    }
+
+    fn expired_user(db: &Db) {
+        db.upsert_user(UpsertUser {
+            twitch_user_id: "123".into(),
+            twitch_login: "ace".into(),
+            twitch_display_name: "Ace".into(),
+            twitch_profile_image_url: None,
+            access_token: "stale".into(),
+            refresh_token: "refresh-1".into(),
+            token_expires_at: "2000-01-01T00:00:00.000Z".into(),
+        })
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn refused_refresh_token_flags_reconnect_and_fails_the_session() {
+        let fake = Arc::new(FakeTwitch {
+            refresh_reauth: true,
+            ..Default::default()
+        });
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        expired_user(&db);
+        enable_competitive(&db);
+        let service = PredictionService::new(db.clone(), fake);
+
+        let err = service
+            .handle_match_start("123", "manual", "competitive")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ServiceError::Twitch(TwitchError::ReauthRequired)));
+        assert!(err.to_string().contains("Reconnect Twitch"));
+        assert!(service.reauth_required().unwrap());
+        // The session must not be left stuck open.
+        assert!(db.get_active_session("123").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn transient_refresh_failure_does_not_flag_reconnect() {
+        let fake = Arc::new(FakeTwitch {
+            refresh_outage: true,
+            ..Default::default()
+        });
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        expired_user(&db);
+        enable_competitive(&db);
+        let service = PredictionService::new(db.clone(), fake);
+
+        assert!(service
+            .handle_match_start("123", "manual", "competitive")
+            .await
+            .is_err());
+        assert!(!service.reauth_required().unwrap());
+    }
+
+    #[tokio::test]
+    async fn successful_refresh_clears_the_reconnect_flag() {
+        let fake = Arc::new(FakeTwitch::default());
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        expired_user(&db);
+        enable_competitive(&db);
+        db.set_config(REAUTH_REQUIRED_KEY, "1").unwrap();
+        let service = PredictionService::new(db.clone(), fake);
+
+        service
+            .handle_match_start("123", "manual", "competitive")
+            .await
+            .unwrap();
+        assert!(!service.reauth_required().unwrap());
+    }
+
+    #[tokio::test]
+    async fn helix_401_refreshes_once_and_retries() {
+        let fake = Arc::new(FakeTwitch::default());
+        fake.create_401s.store(1, Ordering::SeqCst);
+        let (service, db) = setup(fake.clone());
+        enable_competitive(&db);
+
+        service
+            .handle_match_start("123", "manual", "competitive")
+            .await
+            .unwrap();
+        assert!(fake.refresh_called.load(Ordering::SeqCst));
+        assert_eq!(fake.create_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn helix_401_twice_gives_up_after_one_retry() {
+        let fake = Arc::new(FakeTwitch::default());
+        fake.create_401s.store(5, Ordering::SeqCst);
+        let (service, db) = setup(fake.clone());
+        enable_competitive(&db);
+
+        assert!(service
+            .handle_match_start("123", "manual", "competitive")
+            .await
+            .is_err());
+        assert_eq!(fake.create_calls.load(Ordering::SeqCst), 2);
+        assert!(db.get_active_session("123").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn check_session_reports_valid_refreshed_and_reauth() {
+        // Valid token: nothing to do.
+        let (service, _db) = setup(Arc::new(FakeTwitch::default()));
+        assert_eq!(service.check_session().await.unwrap(), SessionHealth::Valid);
+
+        // Invalid token but refresh works.
+        let fake = Arc::new(FakeTwitch {
+            validate_invalid: true,
+            ..Default::default()
+        });
+        let (service, db) = setup(fake);
+        assert_eq!(service.check_session().await.unwrap(), SessionHealth::Refreshed);
+        assert_eq!(db.get_tokens().unwrap().unwrap().access_token, "refreshed-access");
+
+        // Invalid token and refresh refused: flag it.
+        let fake = Arc::new(FakeTwitch {
+            validate_invalid: true,
+            refresh_reauth: true,
+            ..Default::default()
+        });
+        let (service, _db) = setup(fake);
+        assert_eq!(service.check_session().await.unwrap(), SessionHealth::ReauthRequired);
+        assert!(service.reauth_required().unwrap());
+
+        // Invalid token and the broker is down: report the error, don't flag.
+        let fake = Arc::new(FakeTwitch {
+            validate_invalid: true,
+            refresh_outage: true,
+            ..Default::default()
+        });
+        let (service, _db) = setup(fake);
+        assert!(service.check_session().await.is_err());
+        assert!(!service.reauth_required().unwrap());
     }
 }

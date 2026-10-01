@@ -21,6 +21,9 @@ vi.mock("./components/predictions/PredictionsDashboard", () => ({
 const connectedMe: MeResponse = {
   configured: true,
   redirectUri: "http://localhost:3000/auth/twitch/callback",
+  authMode: "hosted",
+  hostedAvailable: true,
+  reauthRequired: false,
   user: {
     id: 1,
     twitch_user_id: "42",
@@ -63,5 +66,23 @@ describe("application bootstrap", () => {
 
     expect(await screen.findByText("test_streamer")).toBeVisible();
     expect(companionApi.getMe).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a reconnect card when a hosted sign-in was refused", async () => {
+    vi.mocked(companionApi.getMe).mockResolvedValue({ ...connectedMe, reauthRequired: true });
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Reconnect your Twitch account" }),
+    ).toBeVisible();
+    expect(screen.getByText("Monitor workspace")).toBeVisible();
+  });
+
+  it("shows no reconnect card when everything is fine", async () => {
+    vi.mocked(companionApi.getMe).mockResolvedValue(connectedMe);
+    render(<App />);
+
+    expect(await screen.findByText("Monitor workspace")).toBeVisible();
+    expect(screen.queryByText(/Reconnect your Twitch account/)).toBeNull();
   });
 });

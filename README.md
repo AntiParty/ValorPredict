@@ -2,9 +2,11 @@
 
 **Free, self-contained Windows app that automatically creates Twitch Channel
 Points Predictions when your Valorant match starts** — and resolves them from
-the match result when it ends. No ValorPredict-hosted service, ValorPredict
-account, or subscription: detection, prediction coordination, and storage run
-locally, while the app connects directly to Riot and Twitch as needed.
+the match result when it ends. No ValorPredict account or subscription:
+detection, prediction coordination, and storage run locally, and the app
+connects directly to Riot and Twitch as needed. The one ValorPredict-run piece
+is a small, open-source, stateless [sign-in service](auth/README.md) that
+connects your Twitch account (and refreshes that login); it stores nothing.
 
 **➡ The product lives in [`companion/`](companion/README.md).** Start there for
 install, setup, and build instructions.
@@ -21,6 +23,7 @@ install, setup, and build instructions.
 | [`companion/src-tauri/`](companion/src-tauri/) | The desktop shell: read-only Riot match detection, system tray, and the IPC commands that surface `vap_core` to the UI. |
 | [`companion/core/`](companion/core/) | `vap_core`: Tauri-independent Twitch OAuth, SQLite store, and prediction lifecycle. Compiles and tests on its own. |
 | [`companion/src/`](companion/src/) | The React UI: onboarding wizard, prediction presets, and monitoring dashboard. |
+| [`auth/`](auth/README.md) | The Twitch sign-in service (Vercel). Holds ValorPredict's Twitch Client Secret so streamers don't need their own Twitch developer app. Stateless; stores and logs nothing. |
 
 ## How detection works
 
@@ -79,9 +82,22 @@ prediction.
 
 ## Data & privacy
 
-- Twitch credentials are **per-user**: each streamer registers their own free
-  Twitch application. Credentials are stored locally and sent only to Twitch
-  as required for OAuth; there is no ValorPredict credential server.
+- **Twitch sign-in.** By default you sign in through ValorPredict's shared
+  Twitch application. The Twitch Client Secret lives only on the sign-in
+  service ([`auth/`](auth/README.md), open source, deployed on Vercel). It is
+  used for two things: turning your sign-in into tokens, and refreshing them
+  every few hours. The service keeps no database and logs no tokens, but your
+  Twitch tokens do pass through it briefly in memory while those requests are
+  handled, so you are trusting that service while you use this mode. The
+  connection code you copy is encrypted, hidden on the page, read by the app
+  straight from the clipboard (never shown in the UI), and expires after 10
+  minutes. Predictions are created and resolved directly between the app and
+  Twitch, so they keep working if the sign-in service is down; only new
+  sign-ins and token refreshes need it.
+- **Prefer not to rely on it?** Choose **Use my own Twitch application** during
+  setup. You register your own free Twitch app; its credentials are stored
+  locally and sent only to Twitch, and the sign-in service is never contacted.
+- Tokens, in either mode, are stored in the local SQLite file described below.
 - The Riot lockfile password is used only with the local loopback client. Riot
   access/entitlement tokens are held in memory and sent only to Riot-owned
   services for the read-only requests described above.
@@ -96,9 +112,10 @@ prediction.
 
 Download the installer from the
 [latest release](https://github.com/AntiParty/ValorPredict/releases/latest), run it, and
-follow the in-app setup: register your own (free) Twitch application, paste its
-Client ID/Secret, connect Twitch, enable a preset, start monitoring. Details in
-the [companion README](companion/README.md).
+follow the in-app setup: click **Connect Twitch**, approve in your browser, paste
+the connection code, enable a preset, start monitoring. No Twitch developer
+account needed (you can still bring your own). Details in the
+[companion README](companion/README.md).
 
 ## Build & verify from source
 

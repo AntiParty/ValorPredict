@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod hashing;
+pub mod hosted_auth;
 pub mod models;
 pub mod predictions;
 pub mod process_detection;
@@ -46,6 +47,7 @@ fn show_main_window(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let db = std::sync::Arc::new(
@@ -57,6 +59,11 @@ pub fn run() {
                 db,
             );
             let auto_start = commands::should_auto_start_monitoring(&runtime.settings.lock());
+            hosted_auth::spawn_session_watchdog(
+                runtime.predictions.clone(),
+                runtime.db.clone(),
+                runtime.status.clone(),
+            );
             app.manage(runtime);
 
             let show = MenuItem::with_id(app, "show", "Show Companion", true, None::<&str>)?;
@@ -138,7 +145,10 @@ pub fn run() {
             predictions::resolve_prediction,
             predictions::cancel_prediction,
             predictions::simulate_match_start,
-            predictions::connect_twitch
+            predictions::connect_twitch,
+            hosted_auth::start_hosted_login,
+            hosted_auth::import_connection_code_from_clipboard,
+            hosted_auth::import_connection_code
         ])
         .build(tauri::generate_context!())
         .expect("error while building ValorPredict")

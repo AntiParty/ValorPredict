@@ -21,10 +21,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use vap_core::db::{Db, Preset, PresetInput, SafeUser, UpsertUser};
-use vap_core::predictions::{PredictionService, Winner};
+use vap_core::predictions::{PredictionService, Winner, REAUTH_REQUIRED_KEY};
 use vap_core::twitch::{TwitchClient, TwitchConfig};
 
 use crate::commands::{push_log, AppRuntimeState};
+use crate::hosted_auth;
 
 /// Fixed loopback port used only for the one-shot Twitch OAuth callback. The
 /// user registers `redirect_uri()` (below) in their Twitch application, so this
@@ -45,26 +46,56 @@ pub fn redirect_uri() -> String {
 pub struct PredictionRuntime {
     pub twitch: Arc<TwitchClient>,
     pub service: Arc<PredictionService>,
+    /// True for ValorPredict's shared Twitch app (sign-in through the broker); false
+    /// when the user registered their own Twitch application.
+    pub hosted: bool,
 }
 
-/// Build the Twitch client + prediction service for the given credentials.
+fn assemble(db: Arc<Db>, config: TwitchConfig, hosted: bool) -> PredictionRuntime {
+    let twitch = Arc::new(TwitchClient::new(config));
+    let service = Arc::new(PredictionService::new(db, twitch.clone()));
+    PredictionRuntime {
+        twitch,
+        service,
+        hosted,
+    }
+}
+
+/// Build the runtime for a streamer's own Twitch application (Advanced path).
 pub fn build_prediction_runtime(
     db: Arc<Db>,
     client_id: String,
     client_secret: String,
 ) -> PredictionRuntime {
-    let config = TwitchConfig::new(client_id, client_secret, redirect_uri());
-    let twitch = Arc::new(TwitchClient::new(config));
-    let service = Arc::new(PredictionService::new(db, twitch.clone()));
-    PredictionRuntime { twitch, service }
+    assemble(
+        db,
+        TwitchConfig::new(client_id, client_secret, redirect_uri()),
+        false,
+    )
 }
 
-/// Restore the runtime from saved credentials (used at startup).
+/// Build the runtime for ValorPredict's shared application, if this build has one.
+pub fn build_hosted_runtime(db: Arc<Db>) -> Option<PredictionRuntime> {
+    hosted_auth::hosted_available().then(|| {
+        assemble(
+            db,
+            TwitchConfig::hosted(
+                hosted_auth::TWITCH_CLIENT_ID.to_string(),
+                hosted_auth::BROKER_BASE_URL.to_string(),
+            ),
+            true,
+        )
+    })
+}
+
+/// Restore the runtime at startup: the user's own Twitch application if they set one
+/// up, otherwise ValorPredict's shared one.
 pub fn restore_runtime(db: &Arc<Db>) -> Option<PredictionRuntime> {
     db.get_twitch_credentials()
         .ok()
         .flatten()
         .map(|(id, secret)| build_prediction_runtime(db.clone(), id, secret))
+        .or_else(|| build_hosted_runtime(db.clone()))
 }
 
 // ---- shared helpers -------------------------------------------------------
@@ -132,11 +163,29 @@ fn validate_preset(
 #[tauri::command]
 pub fn get_me(state: State<'_, AppRuntimeState>) -> Value {
     let user = state.db.get_user().ok().flatten();
+    let hosted = state
+        .predictions
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(|runtime| runtime.hosted)
+        .unwrap_or(false);
+    let reauth_required = state
+        .db
+        .get_config(REAUTH_REQUIRED_KEY)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("1");
     json!({
         "user": user,
         "flash": null,
         "configured": is_configured(&state.predictions),
         "redirectUri": redirect_uri(),
+        // "hosted" = ValorPredict's shared Twitch app, "own" = the user's application.
+        "authMode": if hosted { "hosted" } else { "own" },
+        "hostedAvailable": hosted_auth::hosted_available(),
+        "reauthRequired": reauth_required && user.is_some(),
     })
 }
 
@@ -293,6 +342,10 @@ pub async fn connect_twitch(
     state: State<'_, AppRuntimeState>,
 ) -> Result<SafeUser, String> {
     let runtime = current_runtime(&state)?;
+    if runtime.hosted {
+        // The loopback flow needs a Client Secret, which the shared app never gives out.
+        return Err("Use Connect Twitch to sign in on the web page, then paste the connection code.".into());
+    }
     let oauth_state = uuid::Uuid::new_v4().to_string();
     let auth_url = runtime.twitch.build_authorization_url(&oauth_state);
 
@@ -347,6 +400,7 @@ pub async fn connect_twitch(
         })
         .map_err(|error| error.to_string())?;
     let _ = state.db.ensure_default_presets(&user.twitch_user_id);
+    let _ = state.db.set_config(REAUTH_REQUIRED_KEY, "0");
     push_log(
         &state.status,
         "success",
