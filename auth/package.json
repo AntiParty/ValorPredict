@@ -1,0 +1,24 @@
+{
+  "name": "valorpredict-auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stateless Twitch OAuth broker for ValorPredict (Vercel Functions). Holds the Twitch Client Secret so streamers never need their own Twitch application.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "dev:fake": "tsx dev/server.ts --fake",
+    "dev:local": "tsx --env-file-if-exists=.env.local dev/server.ts",
+    "dev:vercel": "vercel dev"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
