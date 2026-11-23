@@ -52,6 +52,7 @@ What gets copied is the Twitch tokens encrypted with AES-256-GCM using
 
 | Route | Method | Purpose |
 | --- | --- | --- |
+| `/` | GET | The public landing page, a static file at [`public/index.html`](public/index.html). Not part of sign-in. |
 | `/api/login` | GET | Sets a signed state cookie and redirects to Twitch's approval screen. |
 | `/api/callback` | GET | Twitch redirects here. Checks the state cookie, exchanges the code, renders the masked copy page. |
 | `/api/redeem` | POST | `{ "code": "vp1_…" }` → `{ access_token, refresh_token, expires_in }` |

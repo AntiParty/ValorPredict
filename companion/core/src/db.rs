@@ -331,6 +331,17 @@ impl Db {
         .map_err(DbError::from)
     }
 
+    /// Sign out: delete the stored user row (which holds the Twitch tokens) and
+    /// clear the reauth flag. Presets, past sessions, events and any saved
+    /// Twitch application credentials are kept so reconnecting restores them.
+    pub fn disconnect_twitch(&self) -> Result<()> {
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute("DELETE FROM users", [])?;
+        }
+        self.set_config(crate::predictions::REAUTH_REQUIRED_KEY, "0")
+    }
+
     pub fn update_tokens(
         &self,
         twitch_user_id: &str,
@@ -664,6 +675,29 @@ mod tests {
             refresh_token: "refresh-secret".into(),
             token_expires_at: "2030-01-01T00:00:00.000Z".into(),
         }
+    }
+
+    #[test]
+    fn disconnect_removes_tokens_and_user_but_keeps_presets() {
+        let db = Db::open_in_memory().unwrap();
+        let user = db.upsert_user(sample_user()).unwrap();
+        db.ensure_default_presets(&user.twitch_user_id).unwrap();
+        db.set_config(crate::predictions::REAUTH_REQUIRED_KEY, "1")
+            .unwrap();
+
+        db.disconnect_twitch().unwrap();
+
+        assert!(db.get_user().unwrap().is_none());
+        assert!(db.get_tokens().unwrap().is_none());
+        assert_eq!(db.get_presets(&user.twitch_user_id).unwrap().len(), 2);
+        assert_eq!(
+            db.get_config(crate::predictions::REAUTH_REQUIRED_KEY)
+                .unwrap()
+                .as_deref(),
+            Some("0")
+        );
+        // Idempotent when nobody is connected.
+        db.disconnect_twitch().unwrap();
     }
 
     #[test]

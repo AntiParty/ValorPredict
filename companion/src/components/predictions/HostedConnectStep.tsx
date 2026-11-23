@@ -1,10 +1,14 @@
 import { useState, type FormEvent } from "react";
 
 import { companionApi } from "../../api";
+import { Notice } from "../Notice";
 
 interface Props {
   onConnected: () => void;
-  /** Reconnecting after Twitch refused the saved sign-in (changes the wording). */
+  /**
+   * Reconnecting after Twitch refused the saved sign-in: a full-width compact panel
+   * for the dashboard, without the long trust text (that stays in onboarding).
+   */
   reconnect?: boolean;
   /** Onboarding only: switch to registering the streamer's own Twitch application. */
   onUseOwnApp?: () => void;
@@ -49,18 +53,69 @@ export function HostedConnectStep({ onConnected, reconnect = false, onUseOwnApp 
     void attempt(() => companionApi.importConnectionCode(pasted));
   }
 
+  const errorNotice = <Notice notice={error ? { kind: "error", message: error } : null} />;
+
+  if (reconnect) {
+    return (
+      <section className="card reconnect-panel">
+        <div className="reconnect-panel__row">
+          <div>
+            <h2>Reconnect your Twitch account</h2>
+            <p className="muted-line">
+              Your Twitch sign-in expired, so predictions are paused. Sign in with
+              Twitch in your browser, then paste the code here.
+            </p>
+          </div>
+          <div className="reconnect-panel__actions">
+            <button className="button primary" type="button" disabled={busy} onClick={openSignIn}>
+              Connect Twitch
+            </button>
+            <button
+              className="button secondary"
+              type="button"
+              disabled={busy}
+              onClick={() => void attempt(companionApi.importConnectionCodeFromClipboard)}
+            >
+              {busy ? "Connecting…" : "Paste from clipboard"}
+            </button>
+          </div>
+        </div>
+        {errorNotice}
+      <details
+        className="more-disclosure"
+        open={manual}
+        onToggle={(event) => setManual(event.currentTarget.open)}
+      >
+        <summary>Paste manually</summary>
+        <form onSubmit={submitManual}>
+          <label className="field">
+            <span>Connection code</span>
+            <input
+              type="password"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              placeholder="vp1_…"
+              autoComplete="off"
+              spellCheck={false}
+              required
+            />
+          </label>
+          <button className="button secondary" type="submit" disabled={busy || !code.trim()}>
+            Connect
+          </button>
+        </form>
+      </details>
+      </section>
+    );
+  }
+
   return (
     <div className="wizard-step">
-      <div className="preset-head">
-        <div>
-          <span className="card-kicker">{reconnect ? "Reconnect" : "Connect"}</span>
-          <h3>{reconnect ? "Reconnect your Twitch account" : "Connect your Twitch account"}</h3>
-        </div>
-      </div>
+      <h3>Connect your Twitch account</h3>
       <p className="muted-line">
-        {reconnect
-          ? "Your Twitch sign-in expired, so predictions are paused. Sign in again to resume."
-          : "Authorize prediction management so ValorPredict can open and resolve Channel Points Predictions for you. Twitch Predictions require an Affiliate or Partner account."}
+        Authorize prediction management so ValorPredict can open and resolve
+        Channel Points Predictions for you. Twitch Predictions require an
+        Affiliate or Partner account.
       </p>
 
       <ol className="connect-steps">
@@ -94,7 +149,7 @@ export function HostedConnectStep({ onConnected, reconnect = false, onUseOwnApp 
         </li>
       </ol>
 
-      {error && <div className="pred-notice error" role="alert">{error}</div>}
+      {errorNotice}
 
       <details
         className="more-disclosure"

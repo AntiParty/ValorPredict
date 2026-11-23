@@ -1,185 +1,182 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { companionApi } from "../api";
-import { useVisiblePolling } from "../hooks/useVisiblePolling";
-import { useWindowVisible } from "../hooks/useWindowVisible";
-import { HealthBanners } from "./predictions/HealthBanners";
-import type { DetectionStatus } from "../types";
-import { LogPanel } from "./LogPanel";
-import { StatusGrid } from "./StatusGrid";
+import { titleCase } from "../format";
+import { useNotice } from "../hooks/useNotice";
+import type { AutoPredictionPreset, DetectionStatus } from "../types";
+import { Notice } from "./Notice";
 
-const developmentMode = import.meta.env.DEV;
+type Tone = "off" | "watching" | "live" | "warn";
 
-// How often the UI re-reads detector status. Detection itself runs in the Rust
-// backend on its own cadence; this is only the on-screen refresh, so a gentle
-// interval keeps the window light without affecting detection.
-const STATUS_POLL_MS = 3000;
-
-const emptyStatus: DetectionStatus = {
-  riotLockfileFound: false,
-  riotClientRunning: false,
-  valorantRunning: false,
-  region: "unknown",
-  shard: "unknown",
-  localState: "unknown",
-  gameMode: "unknown",
-  confidence: 0,
-  lastMatchIdHash: null,
-  cooldownRemainingSeconds: 0,
-  lastBackendResponse: "No detection yet.",
-  monitoring: false,
-  logs: [],
-};
-
-function formatLabel(value: string) {
-  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+interface Summary {
+  tone: Tone;
+  headline: string;
+  detail: string;
 }
 
-function friendlyState(status: DetectionStatus) {
-  if (!status.monitoring) return "Monitoring is paused";
-  if (!status.valorantRunning) return "Waiting for Valorant";
-  if (status.localState === "current_game") return "Match detected";
-  if (status.localState === "pre_game") return "Preparing for match";
-  if (status.localState === "menus") return "Valorant menus detected";
-  return "Watching Valorant";
+function presetSummary(presets: AutoPredictionPreset[] | undefined): string {
+  if (!presets?.length) return "";
+  const word = (mode: string) => (mode === "competitive" ? "Competitive" : "Custom");
+  return presets
+    .map((preset) => `${word(preset.game_mode)} is ${preset.enabled ? "on" : "off"}`)
+    .join(", ");
+}
+
+// One headline and one detail line say everything the old headline, paragraph, banners
+// and Valorant / State / Mode strip said between them.
+export function summarize(
+  status: DetectionStatus,
+  presets: AutoPredictionPreset[] | undefined,
+  reauthRequired: boolean,
+): Summary {
+  const presetsLine = presetSummary(presets);
+  const withPresets = (text: string) => (presetsLine ? `${text} ${presetsLine}.` : text);
+  const mode = status.gameMode === "unknown" ? "" : `${titleCase(status.gameMode)} `;
+
+  if (reauthRequired) {
+    return {
+      tone: "warn",
+      headline: "Predictions paused: reconnect Twitch",
+      detail: status.monitoring
+        ? "Matches are still detected, but predictions won't open until you reconnect."
+        : "Reconnect Twitch, then start monitoring.",
+    };
+  }
+  if (!status.monitoring) {
+    return {
+      tone: "off",
+      headline: "Monitoring is paused",
+      detail: withPresets("Start monitoring to open predictions automatically."),
+    };
+  }
+  if (!status.valorantRunning) {
+    return {
+      tone: "watching",
+      headline: "Waiting for Valorant",
+      detail: withPresets("Monitoring runs in the tray while you play."),
+    };
+  }
+  switch (status.localState) {
+    case "current_game":
+      return {
+        tone: "live",
+        headline: "Match detected",
+        detail: withPresets(`${mode}match in progress.`.replace(/^./, (c) => c.toUpperCase())),
+      };
+    case "pre_game":
+      return {
+        tone: "live",
+        headline: "Preparing for match",
+        detail: withPresets("Valorant is in agent select."),
+      };
+    case "menus":
+      return {
+        tone: "watching",
+        headline: "Watching for a match",
+        detail: withPresets("Valorant is in the menus."),
+      };
+    default:
+      return {
+        tone: "watching",
+        headline: "Watching Valorant",
+        detail: withPresets("Valorant is running."),
+      };
+  }
+}
+
+// Where the current match is, left to right. The track is the one place on the screen
+// that follows the game live, so it carries the accent.
+const PHASES = ["Menus", "Agent select", "In match", "Result"] as const;
+
+function phaseIndex(status: DetectionStatus): number {
+  if (!status.monitoring || !status.valorantRunning) return -1;
+  switch (status.localState) {
+    case "menus":
+      return 0;
+    case "pre_game":
+      return 1;
+    case "current_game":
+      return 2;
+    case "post_game":
+      return 3;
+    default:
+      return -1;
+  }
+}
+
+function PhaseTrack({ active }: { active: number }) {
+  return (
+    <ol className="phase-track" aria-label="Match phase">
+      {PHASES.map((label, index) => (
+        <li
+          key={label}
+          className={index === active ? "is-current" : index < active ? "is-past" : ""}
+          aria-current={index === active ? "step" : undefined}
+        >
+          <span className="phase-track__bar" aria-hidden="true" />
+          <span className="phase-track__label">{label}</span>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 interface Props {
-  /** Own-app sign-in only: hosted accounts get a reconnect card in App instead. */
+  status: DetectionStatus | null;
+  onStatus: (status: DetectionStatus) => void;
+  presets?: AutoPredictionPreset[];
+  /** Twitch refused the saved sign-in (hosted or own app): predictions can't open. */
   reauthRequired?: boolean;
-  onReconnect: () => void;
 }
 
-export function MonitorSection({ reauthRequired = false, onReconnect }: Props) {
-  const [status, setStatus] = useState(emptyStatus);
+export function MonitorSection({ status, onStatus, presets, reauthRequired = false }: Props) {
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const windowVisible = useWindowVisible();
+  const { notice, showError, clear } = useNotice();
 
-  const refresh = useCallback(async () => {
-    try {
-      const next = await companionApi.getStatus();
-      setStatus((current) =>
-        JSON.stringify(current) === JSON.stringify(next) ? current : next,
-      );
-    } catch {
-      // The Tauri command bridge is absent in a plain Vite preview.
-    }
-  }, []);
+  if (!status) {
+    return (
+      <section className="status-card" aria-busy="true">
+        <p className="muted-line">Checking monitoring</p>
+      </section>
+    );
+  }
 
-  useVisiblePolling(refresh, STATUS_POLL_MS, windowVisible);
+  const summary = summarize(status, presets, reauthRequired);
 
-  const run = async (operation: () => Promise<unknown>) => {
+  async function toggle() {
+    if (!status) return;
     setBusy(true);
-    setNotice("");
+    clear();
     try {
-      const result = await operation();
-      if (result && typeof result === "object" && "message" in result) {
-        setNotice(String((result as { message: unknown }).message));
-      }
-      await refresh();
+      onStatus(
+        await (status.monitoring ? companionApi.stopMonitoring() : companionApi.startMonitoring()),
+      );
     } catch (error) {
-      setNotice(String(error));
+      showError(String(error));
     } finally {
       setBusy(false);
     }
-  };
-
-  const modeLabel =
-    status.gameMode === "unknown" ? "No supported mode yet" : formatLabel(status.gameMode);
+  }
 
   return (
-    <section className="monitor-section">
-      {notice && <div className="notice">{notice}</div>}
-
-      <section className="status-card">
-        <div className="status-card__main">
-          <span className="section-label">Companion status</span>
-          <h1>{friendlyState(status)}</h1>
-          <p>
-            {status.monitoring
-              ? "Monitoring runs in the tray while you play."
-              : "Start monitoring to detect supported Valorant matches and open predictions automatically."}
-          </p>
-          <button
-            className={`primary-action ${status.monitoring ? "pause" : ""}`}
-            disabled={busy}
-            onClick={() =>
-              run(status.monitoring ? companionApi.stopMonitoring : companionApi.startMonitoring)
-            }
-          >
-            <span className={`action-dot ${status.monitoring ? "on" : ""}`} />
-            {status.monitoring ? "Stop monitoring" : "Start monitoring"}
-          </button>
+    <section className="status-card">
+      <div className="status-card__row">
+        <span className={`status-dot ${summary.tone}`} aria-hidden="true" />
+        <div className="status-card__text">
+          <h1>{summary.headline}</h1>
+          <p>{summary.detail}</p>
         </div>
-
-        <dl className="status-strip">
-          <div>
-            <dt>Valorant</dt>
-            <dd className={status.valorantRunning ? "good" : ""}>
-              {status.valorantRunning ? "Running" : "Not running"}
-            </dd>
-          </div>
-          <div>
-            <dt>State</dt>
-            <dd className={status.localState === "current_game" ? "live" : ""}>
-              {formatLabel(status.localState)}
-            </dd>
-          </div>
-          <div>
-            <dt>Mode</dt>
-            <dd className={status.gameMode !== "unknown" ? "good" : ""}>{modeLabel}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <HealthBanners
-        status={status}
-        reauthRequired={reauthRequired}
-        onStartMonitoring={() => run(companionApi.startMonitoring)}
-        onReconnect={() =>
-          run(async () => {
-            await companionApi.connectTwitch();
-            onReconnect();
-          })
-        }
-      />
-
-      {developmentMode && (
-        <details className="diagnostics-disclosure">
-          <summary>Diagnostics</summary>
-          <section className="developer-zone">
-          <div className="developer-heading">
-            <span>Detector telemetry</span>
-            <p>Raw detection signals and sanitized runtime logs.</p>
-          </div>
-          <StatusGrid status={status} />
-          <div className="control-grid">
-            <button
-              className="button secondary"
-              disabled={busy || status.monitoring}
-              onClick={() => run(companionApi.startMonitoring)}
-            >
-              Start Monitoring
-            </button>
-            <button
-              className="button secondary"
-              disabled={busy || !status.monitoring}
-              onClick={() => run(companionApi.stopMonitoring)}
-            >
-              Stop Monitoring
-            </button>
-            <button className="button secondary" disabled={busy} onClick={() => run(companionApi.resetCooldown)}>
-              Reset Cooldown
-            </button>
-            <button className="button secondary" disabled={busy} onClick={() => run(companionApi.clearLogs)}>
-              Clear Logs
-            </button>
-          </div>
-            <LogPanel logs={status.logs} onClear={() => run(companionApi.clearLogs)} />
-          </section>
-        </details>
-      )}
+        <button
+          type="button"
+          className={`button ${status.monitoring ? "secondary" : "primary"}`}
+          disabled={busy}
+          onClick={() => void toggle()}
+        >
+          {status.monitoring ? "Stop monitoring" : "Start monitoring"}
+        </button>
+      </div>
+      <PhaseTrack active={phaseIndex(status)} />
+      <Notice notice={notice} />
     </section>
   );
 }

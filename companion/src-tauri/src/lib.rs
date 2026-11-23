@@ -1,12 +1,15 @@
 pub mod commands;
 pub mod hashing;
 pub mod hosted_auth;
+pub mod metrics;
 pub mod models;
 pub mod predictions;
 pub mod process_detection;
 pub mod riot_local_client;
 pub mod riot_lockfile;
+pub mod riot_session;
 pub mod settings;
+pub mod shared;
 pub mod valorant_detector;
 
 use tauri::{
@@ -27,6 +30,8 @@ fn build_main_window(app: &tauri::AppHandle) {
         .inner_size(1060.0, 800.0)
         .min_inner_size(560.0, 640.0)
         .resizable(true)
+        // The UI draws its own title bar with minimize and close (Titlebar.tsx).
+        .decorations(false)
         .build();
 }
 
@@ -62,8 +67,9 @@ pub fn run() {
             hosted_auth::spawn_session_watchdog(
                 runtime.predictions.clone(),
                 runtime.db.clone(),
-                runtime.status.clone(),
+                runtime.shared.clone(),
             );
+            runtime.shared.set_app_handle(app.handle().clone());
             app.manage(runtime);
 
             let show = MenuItem::with_id(app, "show", "Show Companion", true, None::<&str>)?;
@@ -130,6 +136,8 @@ pub fn run() {
             commands::load_settings,
             commands::save_settings,
             commands::get_status,
+            commands::get_logs,
+            commands::get_detection_metrics,
             commands::start_monitoring,
             commands::stop_monitoring,
             commands::simulate_pregame,
@@ -146,6 +154,7 @@ pub fn run() {
             predictions::cancel_prediction,
             predictions::simulate_match_start,
             predictions::connect_twitch,
+            predictions::disconnect_twitch,
             hosted_auth::start_hosted_login,
             hosted_auth::import_connection_code_from_clipboard,
             hosted_auth::import_connection_code

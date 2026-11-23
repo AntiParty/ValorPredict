@@ -1,16 +1,21 @@
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fmt, fs, path::PathBuf, sync::Arc};
 
+use parking_lot::Mutex;
 use regex::Regex;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 
-use crate::{models::ValorantGameMode, riot_lockfile::Lockfile};
+use crate::{metrics::DetectionMetrics, models::ValorantGameMode, riot_lockfile::Lockfile};
 
 pub const CLIENT_PLATFORM: &str = "ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Zm9ybU9TIjogIldpbmRvd3MiLA0KCSJwbGF0Zm9ybU9TVmVyc2lvbiI6ICIxMC4wLjE5MDQyLjEuMjU2LjY0Yml0IiwNCgkicGxhdGZvcm1DaGlwc2V0IjogIlVua25vd24iDQp9";
 pub const CLIENT_VERSION_FALLBACK: &str = match option_env!("RIOT_CLIENT_VERSION_FALLBACK") {
     Some(value) => value,
     None => "",
 };
+
+/// Match ids whose game mode we remember. A match's mode can't change, so the
+/// details endpoint is only fetched the first time an id is seen.
+const MODE_CACHE_LIMIT: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegionShard {
@@ -33,14 +38,71 @@ pub struct RiotMatchSignal {
     pub game_mode: ValorantGameMode,
 }
 
+/// Why a Riot call failed. `AuthExpired` (HTTP 400/401/403) is the one the
+/// session cache reacts to by refreshing the entitlements and retrying once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RiotError {
+    AuthExpired(u16),
+    Other(String),
+}
+
+impl fmt::Display for RiotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AuthExpired(code) => {
+                write!(formatter, "Riot rejected the session tokens (HTTP {code}).")
+            }
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<RiotError> for String {
+    fn from(error: RiotError) -> Self {
+        error.to_string()
+    }
+}
+
+impl From<String> for RiotError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+/// The three values `/entitlements/v1/token` provides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entitlements {
+    pub puuid: String,
+    pub access_token: String,
+    pub entitlement_token: String,
+}
+
+/// Auth failures Riot's servers report for expired tokens.
+pub fn is_auth_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum MatchKind {
+    PreGame,
+    CurrentGame,
+}
+
 pub struct RiotLocalClient {
     lockfile: Lockfile,
     local_client: Client,
     glz_client: Client,
+    metrics: Arc<DetectionMetrics>,
+    /// Replaces `https://glz-…` / `https://pd.…` bases (used by tests only).
+    server_base_override: Option<String>,
+    mode_cache: Mutex<HashMap<(MatchKind, String), ValorantGameMode>>,
 }
 
 impl RiotLocalClient {
-    pub fn new(lockfile: Lockfile) -> Result<Self, String> {
+    pub fn new(lockfile: Lockfile, metrics: Arc<DetectionMetrics>) -> Result<Self, String> {
         let local_client = Client::builder()
             .danger_accept_invalid_certs(true)
             .timeout(std::time::Duration::from_secs(4))
@@ -54,10 +116,83 @@ impl RiotLocalClient {
             lockfile,
             local_client,
             glz_client,
+            metrics,
+            server_base_override: None,
+            mode_cache: Mutex::new(HashMap::new()),
         })
     }
 
+    /// Point the Riot server calls at another base URL. For tests only.
+    #[doc(hidden)]
+    pub fn with_server_base_override(mut self, base: impl Into<String>) -> Self {
+        self.server_base_override = Some(base.into());
+        self
+    }
+
+    /// Read the entitlements, region, client version and (only if needed) the
+    /// VALORANT log. Meant to run once per Riot session, not once per poll.
     pub async fn session_context(&self) -> Result<RiotSessionContext, String> {
+        let metrics = self.metrics.clone();
+        self.session_context_with(move || {
+            metrics.log_reads.record();
+            read_shooter_game_log()
+        })
+        .await
+    }
+
+    /// `read_log` is called at most once, and only when the region-locale or
+    /// external-sessions answer didn't provide the region or the client version.
+    pub async fn session_context_with<F>(&self, read_log: F) -> Result<RiotSessionContext, String>
+    where
+        F: FnOnce() -> Option<String>,
+    {
+        let entitlements = self.fetch_entitlements().await?;
+
+        let region_json = self.local_json("/riotclient/region-locale").await.ok();
+        let session_json = self
+            .local_json("/product-session/v1/external-sessions")
+            .await
+            .ok();
+        let region_from_api = region_json.as_ref().and_then(parse_region_json);
+        let version_from_api = session_json.as_ref().and_then(extract_client_version);
+
+        // Read lazily and at most once, shared by both fallbacks.
+        let log = std::cell::OnceCell::new();
+        let read_log = std::cell::Cell::new(Some(read_log));
+        let get_log = || {
+            log.get_or_init(|| read_log.take().and_then(|read| read()).unwrap_or_default())
+                .as_str()
+        };
+
+        let region_shard = region_from_api
+            .or_else(|| {
+                parse_region_shard_from_log(get_log())
+                    .map(|(region, shard)| RegionShard { region, shard })
+            })
+            .unwrap_or(RegionShard {
+                region: "unknown".into(),
+                shard: "unknown".into(),
+            });
+        // A context without a usable region can never serve a Riot server call;
+        // fail so the next poll builds a new one instead of caching this one.
+        ensure_region_known(&region_shard)?;
+        let client_version = version_from_api
+            .or_else(|| parse_client_version_from_log(get_log()))
+            .or_else(|| {
+                (!CLIENT_VERSION_FALLBACK.is_empty()).then(|| CLIENT_VERSION_FALLBACK.into())
+            })
+            .ok_or_else(|| "Valorant client version could not be detected.".to_string())?;
+
+        Ok(RiotSessionContext {
+            puuid: entitlements.puuid,
+            access_token: entitlements.access_token,
+            entitlement_token: entitlements.entitlement_token,
+            region_shard,
+            client_version,
+        })
+    }
+
+    pub async fn fetch_entitlements(&self) -> Result<Entitlements, String> {
         let entitlements = self.local_json("/entitlements/v1/token").await?;
         let access_token = string_field(&entitlements, &["accessToken", "access_token"])
             .ok_or_else(|| "Riot access token was not present locally.".to_string())?;
@@ -65,56 +200,37 @@ impl RiotLocalClient {
             .ok_or_else(|| "Riot entitlement token was not present locally.".to_string())?;
         let puuid = string_field(&entitlements, &["subject", "puuid"])
             .ok_or_else(|| "Riot player identifier was not present locally.".to_string())?;
-
-        let region_json = self.local_json("/riotclient/region-locale").await.ok();
-        let session_json = self
-            .local_json("/product-session/v1/external-sessions")
-            .await
-            .ok();
-        let log = read_shooter_game_log().unwrap_or_default();
-        let region_shard = region_json
-            .as_ref()
-            .and_then(parse_region_json)
-            .or_else(|| {
-                parse_region_shard_from_log(&log)
-                    .map(|(region, shard)| RegionShard { region, shard })
-            })
-            .unwrap_or(RegionShard {
-                region: "unknown".into(),
-                shard: "unknown".into(),
-            });
-        let client_version = session_json
-            .as_ref()
-            .and_then(extract_client_version)
-            .or_else(|| parse_client_version_from_log(&log))
-            .or_else(|| {
-                (!CLIENT_VERSION_FALLBACK.is_empty()).then(|| CLIENT_VERSION_FALLBACK.into())
-            })
-            .ok_or_else(|| "Valorant client version could not be detected.".to_string())?;
-
-        Ok(RiotSessionContext {
+        Ok(Entitlements {
             puuid,
             access_token,
             entitlement_token,
-            region_shard,
-            client_version,
         })
     }
 
     pub async fn get_pregame_match(
         &self,
         context: &RiotSessionContext,
-    ) -> Result<Option<RiotMatchSignal>, String> {
-        self.glz_match("pregame/v1/players", "pregame/v1/matches", context)
-            .await
+    ) -> Result<Option<RiotMatchSignal>, RiotError> {
+        self.glz_match(
+            MatchKind::PreGame,
+            "pregame/v1/players",
+            "pregame/v1/matches",
+            context,
+        )
+        .await
     }
 
     pub async fn get_current_game_match(
         &self,
         context: &RiotSessionContext,
-    ) -> Result<Option<RiotMatchSignal>, String> {
-        self.glz_match("core-game/v1/players", "core-game/v1/matches", context)
-            .await
+    ) -> Result<Option<RiotMatchSignal>, RiotError> {
+        self.glz_match(
+            MatchKind::CurrentGame,
+            "core-game/v1/players",
+            "core-game/v1/matches",
+            context,
+        )
+        .await
     }
 
     /// Read the finished-match details for `match_id` and report whether the
@@ -124,14 +240,16 @@ impl RiotLocalClient {
         &self,
         match_id: &str,
         context: &RiotSessionContext,
-    ) -> Result<Option<bool>, String> {
+    ) -> Result<Option<bool>, RiotError> {
         if context.region_shard.shard == "unknown" {
-            return Err("Riot shard is unavailable.".into());
+            return Err(RiotError::Other("Riot shard is unavailable.".into()));
         }
-        let url = format!(
-            "https://pd.{}.a.pvp.net/match-details/v1/matches/{}",
-            context.region_shard.shard, match_id
-        );
+        let path = format!("match-details/v1/matches/{match_id}");
+        let url = match &self.server_base_override {
+            Some(base) => format!("{base}/{path}"),
+            None => format!("https://pd.{}.a.pvp.net/{path}", context.region_shard.shard),
+        };
+        self.metrics.riot_server_calls.record();
         let response = self
             .glz_client
             .get(url)
@@ -141,30 +259,29 @@ impl RiotLocalClient {
             .bearer_auth(&context.access_token)
             .send()
             .await
-            .map_err(|_| "Read-only Riot match-details request failed.".to_string())?;
+            .map_err(|_| {
+                RiotError::Other("Read-only Riot match-details request failed.".to_string())
+            })?;
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        if matches!(
-            response.status(),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
-        ) {
-            return Err("Riot local authorization expired; the session will be re-read.".into());
+        if is_auth_status(response.status()) {
+            return Err(RiotError::AuthExpired(response.status().as_u16()));
         }
         if !response.status().is_success() {
-            return Err(format!(
+            return Err(RiotError::Other(format!(
                 "Riot match-details endpoint returned {}.",
                 response.status()
-            ));
+            )));
         }
-        let value: Value = response
-            .json()
-            .await
-            .map_err(|_| "Riot match-details endpoint returned invalid JSON.".to_string())?;
+        let value: Value = response.json().await.map_err(|_| {
+            RiotError::Other("Riot match-details endpoint returned invalid JSON.".to_string())
+        })?;
         Ok(determine_match_won(&value, &context.puuid))
     }
 
     async fn local_json(&self, path: &str) -> Result<Value, String> {
+        self.metrics.loopback_calls.record();
         let response = self
             .local_client
             .get(format!("{}{}", self.lockfile.local_base_url(), path))
@@ -186,10 +303,11 @@ impl RiotLocalClient {
 
     async fn glz_match(
         &self,
+        kind: MatchKind,
         resource: &str,
         match_resource: &str,
         context: &RiotSessionContext,
-    ) -> Result<Option<RiotMatchSignal>, String> {
+    ) -> Result<Option<RiotMatchSignal>, RiotError> {
         let Some(player) = self
             .glz_json(&format!("{resource}/{}", context.puuid), context)
             .await?
@@ -199,12 +317,29 @@ impl RiotLocalClient {
         let Some(match_id) = extract_match_id(&player) else {
             return Ok(None);
         };
-        let game_mode = match self
-            .glz_json(&format!("{match_resource}/{match_id}"), context)
-            .await?
-        {
-            Some(details) => normalize_game_mode(&details),
-            None => ValorantGameMode::Unknown,
+        let cached = self
+            .mode_cache
+            .lock()
+            .get(&(kind, match_id.clone()))
+            .cloned();
+        let game_mode = match cached {
+            Some(mode) => mode,
+            None => match self
+                .glz_json(&format!("{match_resource}/{match_id}"), context)
+                .await?
+            {
+                Some(details) => {
+                    let mode = normalize_game_mode(&details);
+                    let mut cache = self.mode_cache.lock();
+                    if cache.len() >= MODE_CACHE_LIMIT {
+                        cache.clear();
+                    }
+                    cache.insert((kind, match_id.clone()), mode.clone());
+                    mode
+                }
+                // Not published yet: don't remember it, try again next poll.
+                None => ValorantGameMode::Unknown,
+            },
         };
         Ok(Some(RiotMatchSignal {
             match_id,
@@ -216,14 +351,20 @@ impl RiotLocalClient {
         &self,
         resource: &str,
         context: &RiotSessionContext,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, RiotError> {
         if context.region_shard.region == "unknown" || context.region_shard.shard == "unknown" {
-            return Err("Riot region and shard are unavailable.".into());
+            return Err(RiotError::Other(
+                "Riot region and shard are unavailable.".into(),
+            ));
         }
-        let url = format!(
-            "https://glz-{}-1.{}.a.pvp.net/{}",
-            context.region_shard.region, context.region_shard.shard, resource
-        );
+        let url = match &self.server_base_override {
+            Some(base) => format!("{base}/{resource}"),
+            None => format!(
+                "https://glz-{}-1.{}.a.pvp.net/{}",
+                context.region_shard.region, context.region_shard.shard, resource
+            ),
+        };
+        self.metrics.riot_server_calls.record();
         let response = self
             .glz_client
             .get(url)
@@ -233,28 +374,34 @@ impl RiotLocalClient {
             .bearer_auth(&context.access_token)
             .send()
             .await
-            .map_err(|_| "Read-only Riot match-state request failed.".to_string())?;
+            .map_err(|_| {
+                RiotError::Other("Read-only Riot match-state request failed.".to_string())
+            })?;
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        if matches!(
-            response.status(),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
-        ) {
-            return Err("Riot local authorization expired; the session will be re-read.".into());
+        if is_auth_status(response.status()) {
+            return Err(RiotError::AuthExpired(response.status().as_u16()));
         }
         if !response.status().is_success() {
-            return Err(format!(
+            return Err(RiotError::Other(format!(
                 "Riot match-state endpoint returned {}.",
                 response.status()
-            ));
+            )));
         }
-        let value = response
-            .json()
-            .await
-            .map_err(|_| "Riot match-state endpoint returned invalid JSON.".to_string())?;
+        let value = response.json().await.map_err(|_| {
+            RiotError::Other("Riot match-state endpoint returned invalid JSON.".to_string())
+        })?;
         Ok(Some(value))
     }
+}
+
+/// Refuse a region/shard that couldn't be determined.
+pub fn ensure_region_known(region_shard: &RegionShard) -> Result<(), String> {
+    if region_shard.region == "unknown" || region_shard.shard == "unknown" {
+        return Err("Riot region and shard could not be detected yet.".into());
+    }
+    Ok(())
 }
 
 pub fn extract_match_id(value: &Value) -> Option<String> {

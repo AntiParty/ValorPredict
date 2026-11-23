@@ -2,19 +2,16 @@ import type { LogEntry } from "../types";
 
 interface Props {
   logs: LogEntry[];
-  onClear: () => Promise<void>;
+  onClear: () => void;
 }
 
 export function LogPanel({ logs, onClear }: Props) {
   return (
-    <section className="panel log-panel">
+    <section className="log-panel">
       <div className="panel-heading">
-        <div>
-          <span className="eyebrow">Sanitized output</span>
-          <h2>Debug Log</h2>
-        </div>
-        <button className="text-button" onClick={onClear}>
-          Clear Log
+        <h3>Debug log</h3>
+        <button type="button" className="button ghost" onClick={onClear}>
+          Clear logs
         </button>
       </div>
       <div className="log-rows">

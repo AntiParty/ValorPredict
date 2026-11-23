@@ -1,52 +1,53 @@
-import type { DetectionStatus } from "../../types";
+import { formatRelative } from "../../format";
+import { useNotice } from "../../hooks/useNotice";
+import type { PredictionEvent } from "../../types";
+import { Notice } from "../Notice";
 
 interface Props {
-  status: DetectionStatus;
-  /** The backend couldn't refresh Twitch: the saved sign-in no longer works. */
+  /** Own-app sign-in only: hosted accounts get the compact reconnect panel instead. */
   reauthRequired: boolean;
-  onStartMonitoring: () => void;
-  onReconnect: () => void;
+  /** Newest prediction event, if any; only a `prediction_error` produces a banner. */
+  latestEvent?: PredictionEvent | null;
+  /** Rejects with the reason when reconnecting fails; it is shown under the banner. */
+  onReconnect: () => Promise<void> | void;
 }
 
 interface Banner {
   id: string;
-  tone: "info" | "warn";
   message: string;
   actionLabel?: string;
-  onAction?: () => void;
+  onAction?: () => void | Promise<void>;
 }
 
-// Plain-language nudges shown under the status card, only when something needs
-// attention. When all is well, nothing renders and the status card's
-// "Watching Valorant" is the all-clear.
-export function HealthBanners({ status, reauthRequired, onStartMonitoring, onReconnect }: Props) {
+// Problems that need action and that nothing else on screen explains. "Paused" and
+// "waiting for Valorant" are not problems: the status card already says them.
+export function HealthBanners({ reauthRequired, latestEvent, onReconnect }: Props) {
   const banners: Banner[] = [];
+  const { notice, showError, clear } = useNotice();
 
-  // Driven by the backend: an access token past its timestamp is normal (it is
-  // refreshed on next use), so only a refused refresh token means "reconnect".
   if (reauthRequired) {
     banners.push({
       id: "twitch",
-      tone: "warn",
-      message: "Your Twitch sign-in expired — reconnect to keep predictions working.",
+      message: "Your Twitch sign-in expired. Reconnect to keep predictions working.",
       actionLabel: "Reconnect",
-      onAction: onReconnect,
+      onAction: async () => {
+        clear();
+        try {
+          await onReconnect();
+        } catch (error) {
+          showError(String(error));
+        }
+      },
     });
   }
 
-  if (!status.monitoring) {
+  // The newest event being an error means nothing has worked since (a later started or
+  // resolved prediction would be newer). This is how a streamer without channel points
+  // finds out why nothing opened.
+  if (latestEvent?.type === "prediction_error") {
     banners.push({
-      id: "monitoring",
-      tone: "info",
-      message: "Monitoring is paused — start it to open predictions automatically.",
-      actionLabel: "Start monitoring",
-      onAction: onStartMonitoring,
-    });
-  } else if (!status.valorantRunning) {
-    banners.push({
-      id: "valorant",
-      tone: "info",
-      message: "Waiting for Valorant to launch — you're all set, just hop into a match.",
+      id: "prediction-error",
+      message: `The last prediction failed (${formatRelative(latestEvent.created_at)}): ${latestEvent.message}`,
     });
   }
 
@@ -54,17 +55,18 @@ export function HealthBanners({ status, reauthRequired, onStartMonitoring, onRec
 
   return (
     <div className="health-banners">
-      {banners.slice(0, 2).map((banner) => (
-        <div key={banner.id} className={`health-banner ${banner.tone}`}>
+      {banners.map((banner) => (
+        <div key={banner.id} className="health-banner" role="alert">
           <span className="health-banner__dot" aria-hidden="true" />
           <p>{banner.message}</p>
           {banner.actionLabel && banner.onAction && (
-            <button type="button" className="button ghost" onClick={banner.onAction}>
+            <button type="button" className="button secondary" onClick={banner.onAction}>
               {banner.actionLabel}
             </button>
           )}
         </div>
       ))}
+      <Notice notice={notice} />
     </div>
   );
 }

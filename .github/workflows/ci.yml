@@ -1,0 +1,83 @@
+name: CI
+
+# Checks only: runs the tests and type checks on every push to main and every pull
+# request. Nothing is built for release or published here (see release.yml for that).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  companion:
+    name: Companion app
+    # The app is Windows-only, and the Tauri shell needs WebView2 to compile and test.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            companion/src-tauri -> target
+            companion/core -> target
+
+      - name: Install UI dependencies
+        working-directory: companion
+        run: npm ci
+
+      - name: Test UI
+        working-directory: companion
+        run: npm run test:run
+
+      # Type-checks the UI and produces dist/, which the Tauri crate embeds at compile time.
+      - name: Type-check and build UI
+        working-directory: companion
+        run: npm run build
+
+      - name: Test vap_core
+        working-directory: companion/core
+        run: cargo test
+
+      - name: Test companion shell
+        working-directory: companion/src-tauri
+        run: cargo test
+
+  auth:
+    name: Auth service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: auth/package-lock.json
+
+      - name: Install dependencies
+        working-directory: auth
+        run: npm ci
+
+      - name: Type-check
+        working-directory: auth
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: auth
+        run: npm test

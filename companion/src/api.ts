@@ -8,15 +8,13 @@ import type {
   MeResponse,
   PresetGameMode,
   PresetInput,
+  DetectionMetrics,
+  LogEntry,
   SafeUser,
-  SettingsView,
 } from "./types";
 
 export const companionApi = {
   // --- Companion detection / monitoring ---
-  loadSettings: () => invoke<SettingsView>("load_settings"),
-  saveSettings: (pollIntervalSeconds: number) =>
-    invoke<SettingsView>("save_settings", { pollIntervalSeconds }),
   getStatus: () => invoke<DetectionStatus>("get_status"),
   startMonitoring: () => invoke<DetectionStatus>("start_monitoring"),
   stopMonitoring: () => invoke<DetectionStatus>("stop_monitoring"),
@@ -27,6 +25,9 @@ export const companionApi = {
     invoke<BackendResponse>("simulate_custom_current_game"),
   resetCooldown: () => invoke<DetectionStatus>("reset_cooldown"),
   clearLogs: () => invoke<DetectionStatus>("clear_logs"),
+  // Diagnostics only: logs are not part of the status payload any more.
+  getLogs: () => invoke<LogEntry[]>("get_logs"),
+  getDetectionMetrics: () => invoke<DetectionMetrics>("get_detection_metrics"),
 
   // --- Predictions (local backend) ---
   getMe: () => invoke<MeResponse>("get_me"),
@@ -57,6 +58,7 @@ export const companionApi = {
       "simulate_match_start",
       { gameMode },
     ),
+  disconnectTwitch: () => invoke<null>("disconnect_twitch"),
   connectTwitch: () => invoke<SafeUser>("connect_twitch"),
   // Hosted sign-in. The connection code is read from the clipboard in Rust and never
   // passes through this webview; the manual variant exists only as a fallback.

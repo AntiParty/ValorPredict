@@ -1,0 +1,1728 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ValorPredict</title>
+    <meta
+      name="description"
+      content="ValorPredict opens a Twitch Channel Points prediction when your Valorant match starts and resolves it when the match ends. Coming soon for Windows."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5 14.5 8 8 14.5 1.5 8Z M8 5.5 10.5 8 8 10.5 5.5 8Z' fill='none' stroke='%23ff4655' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;1,9..144,500&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0c0d0f;
+        --frame: #141518;
+        --surface: #17181c;
+        --raised: #1e1f24;
+        --line: rgba(255, 255, 255, 0.07);
+        --line-strong: rgba(255, 255, 255, 0.12);
+        --text: #ededef;
+        --text-soft: #a6a7ad;
+        --muted: #7d7e85;
+        --red: #ff4655;
+        --red-text: #ff7a85;
+        --red-soft: rgba(255, 70, 85, 0.12);
+        --red-line: rgba(255, 70, 85, 0.35);
+        --green: #4cc38a;
+        --blue: #4a8df8;
+        --pink: #e05aa6;
+        --serif: "Fraunces", Georgia, serif;
+        --sans: "Geist", "Segoe UI", system-ui, sans-serif;
+        --mono: "Geist Mono", "Cascadia Mono", Consolas, monospace;
+        --ease: cubic-bezier(0.2, 0, 0, 1);
+        color-scheme: dark;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        color: var(--text);
+        background: var(--bg);
+        font-family: var(--sans);
+        font-size: 16px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a { color: inherit; }
+      h1, h2, h3, p { margin: 0; }
+
+      a:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid var(--red-text);
+        outline-offset: 3px;
+      }
+
+      .wrap {
+        width: min(1120px, calc(100% - 48px));
+        margin: 0 auto;
+      }
+
+      /* ---- Navigation ---- */
+
+      .nav {
+        position: sticky;
+        z-index: 5;
+        top: 0;
+        border-bottom: 1px solid transparent;
+        background: rgba(12, 13, 15, 0.85);
+        backdrop-filter: blur(12px);
+      }
+
+      .nav .wrap {
+        display: flex;
+        height: 64px;
+        align-items: center;
+        gap: 32px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 16px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+
+      .mark {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: var(--red);
+        stroke-width: 1.5;
+        stroke-linejoin: round;
+      }
+
+      .nav__links {
+        display: flex;
+        flex: 1;
+        justify-content: center;
+        gap: 28px;
+        font-size: 14px;
+      }
+
+      .nav__links a,
+      .nav__login {
+        color: var(--text-soft);
+        text-decoration: none;
+        transition: color 120ms var(--ease);
+      }
+
+      .nav__links a:hover,
+      .nav__login:hover { color: var(--text); }
+
+      .nav__login { font-size: 14px; }
+
+      .pill {
+        display: inline-flex;
+        height: 40px;
+        align-items: center;
+        padding: 0 18px;
+        border-radius: 20px;
+        color: #111214;
+        background: var(--text);
+        font-size: 14px;
+        font-weight: 500;
+        text-decoration: none;
+        transition: background-color 120ms var(--ease);
+      }
+
+      .pill:hover { background: #fff; }
+      .pill.big { height: 48px; padding: 0 24px; border-radius: 24px; font-size: 16px; }
+
+      /* ---- Hero ---- */
+
+      .hero {
+        padding: 88px 0 56px;
+        text-align: center;
+      }
+
+      .hero h1 {
+        font-family: var(--serif);
+        font-size: 60px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+      }
+
+      .hero h1 em {
+        font-style: italic;
+      }
+
+      .hero__lede {
+        max-width: 600px;
+        margin: 24px auto 0;
+        color: var(--text-soft);
+        font-size: 18px;
+        line-height: 1.6;
+      }
+
+      .chip {
+        display: inline-block;
+        padding: 0 8px;
+        border-radius: 6px;
+        color: var(--red-text);
+        background: var(--red-soft);
+        white-space: nowrap;
+      }
+
+      .hero__cta {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        margin-top: 32px;
+      }
+
+      .hero__meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .hero__meta i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--red);
+      }
+
+      /* ---- Showcase frame around the app window ---- */
+
+      .showcase {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 32px;
+      }
+
+      .showcase > .window {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+
+      /* ---- The app, drawn in HTML ---- */
+
+
+
+      .app {
+        display: grid;
+        gap: 12px;
+        width: min(680px, 100%);
+        margin: 0 auto;
+        padding: 24px 20px 32px;
+      }
+
+      .card {
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface);
+      }
+
+      .card.live { border-color: var(--red-line); }
+
+      .live__head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 14px;
+        font-weight: 500;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--red-text);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .tag i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--red);
+      }
+
+      .live__head time,
+      .meta {
+        margin-left: auto;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .btns {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .btn {
+        display: inline-flex;
+        height: 30px;
+        align-items: center;
+        padding: 0 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--raised);
+        font-size: 12px;
+        font-style: normal;
+        font-weight: 500;
+      }
+
+      .btn.light {
+        border-color: transparent;
+        color: #111214;
+        background: var(--text);
+      }
+
+      .btn.danger {
+        margin-left: auto;
+        border-color: transparent;
+        color: var(--red-text);
+        background: transparent;
+      }
+
+      .state {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+      }
+
+      .state > i {
+        width: 8px;
+        height: 8px;
+        flex: none;
+        margin-top: 10px;
+        border-radius: 50%;
+        background: var(--red);
+      }
+
+      .state > i.green { background: var(--green); }
+
+      .state h3 {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .state p {
+        margin-top: 2px;
+        color: var(--text-soft);
+        font-size: 12px;
+      }
+
+      .state .btn { margin-left: auto; }
+
+      .phases {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+        margin: 20px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .phases li {
+        display: grid;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        transition: color 300ms var(--ease);
+      }
+
+      .phases li::before {
+        content: "";
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.07);
+        transition: background-color 300ms var(--ease);
+      }
+
+      .phases li.past { color: var(--text-soft); }
+      .phases li.past::before { background: rgba(255, 255, 255, 0.22); }
+      .phases li.now { color: var(--text); }
+      .phases li.now::before { background: var(--red); }
+
+      .label {
+        margin: 8px 0 0;
+        font-size: 14px;
+        font-weight: 500;
+      }
+
+      .rows {
+        border-top: 1px solid var(--line);
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 100px minmax(0, 1fr) auto;
+        min-height: 48px;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+      }
+
+      .row b { font-weight: 500; }
+      .row.off b { color: var(--muted); }
+
+      .row span {
+        overflow: hidden;
+        color: var(--text-soft);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .switch {
+        width: 30px;
+        height: 17px;
+        padding: 3px;
+        border-radius: 9px;
+        background: var(--raised);
+        box-shadow: inset 0 0 0 1px var(--line-strong);
+      }
+
+      .switch::after {
+        content: "";
+        display: block;
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+
+      .switch.on { background: var(--red); box-shadow: none; }
+      .switch.on::after { background: #fff; transform: translateX(13px); }
+
+      .events {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .events li {
+        display: grid;
+        grid-template-columns: 6px 1fr auto;
+        gap: 12px;
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+      }
+
+      .events li:first-child { border-top: 0; }
+
+      .events li > i {
+        width: 6px;
+        height: 6px;
+        margin-top: 6px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+
+      .events li > i.green { background: var(--green); }
+      .events b { font-weight: 500; }
+      .events p { margin-top: 2px; color: var(--text-soft); font-size: 11px; }
+
+      /* ---- Windows 11 chrome for every preview ---- */
+
+      .window {
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 8px;
+        background: var(--bg);
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.55),
+          0 2px 6px rgba(0, 0, 0, 0.25),
+          0 16px 32px rgba(0, 0, 0, 0.3),
+          0 32px 80px rgba(0, 0, 0, 0.35);
+        text-align: left;
+        font-family: "Segoe UI Variable Text", "Segoe UI", var(--sans);
+      }
+
+      .titlebar {
+        display: flex;
+        height: 40px;
+        align-items: center;
+        gap: 8px;
+        padding-left: 16px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .titlebar .mark { width: 14px; height: 14px; }
+      .titlebar .grow,
+      .tabs .grow { flex: 1; }
+
+      .ctrl {
+        display: grid;
+        width: 46px;
+        height: 100%;
+        flex: none;
+        place-items: center;
+        color: rgba(255, 255, 255, 0.86);
+      }
+
+      .ctrl svg {
+        width: 10px;
+        height: 10px;
+        overflow: visible;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1;
+      }
+
+      .who {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-right: 8px;
+        color: var(--text-soft);
+        font-weight: 400;
+      }
+
+      .who b {
+        display: grid;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--raised);
+        box-shadow: inset 0 0 0 1px var(--line-strong);
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      .window__body { padding: 20px; }
+
+      .panel__stage .window {
+        border-bottom: 0;
+        border-radius: 8px 8px 0 0;
+      }
+
+      /* Browser window around the Twitch views */
+      .browser { background: #0e0e10; }
+
+      .tabs {
+        display: flex;
+        height: 40px;
+        align-items: flex-end;
+        padding-left: 8px;
+        background: #1c1c1f;
+      }
+
+      .tabs .ctrl { align-self: stretch; }
+
+      .tab {
+        display: flex;
+        width: 200px;
+        height: 32px;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        border-radius: 8px 8px 0 0;
+        background: #2b2b2e;
+        font-size: 12px;
+      }
+
+      .favicon {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        background: #9147ff;
+      }
+
+      .addressbar {
+        display: flex;
+        height: 40px;
+        align-items: center;
+        gap: 12px;
+        padding: 0 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        background: #2b2b2e;
+      }
+
+      .nav-glyphs { display: flex; gap: 12px; }
+
+      .addressbar svg {
+        width: 14px;
+        height: 14px;
+        fill: none;
+        stroke: var(--text-soft);
+        stroke-width: 1.3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .url {
+        display: flex;
+        height: 28px;
+        flex: 1;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        border-radius: 14px;
+        color: var(--text-soft);
+        background: #1c1c1f;
+        font-size: 12px;
+      }
+
+      .url svg { width: 12px; height: 12px; }
+
+      /* ---- Desktop behind the hero window ---- */
+
+      .showcase {
+        position: relative;
+        padding: 56px 56px 112px;
+        background:
+          radial-gradient(120% 90% at 20% 0%, #262a33 0%, transparent 60%),
+          radial-gradient(90% 80% at 100% 100%, #1d2027 0%, transparent 55%),
+          #111216;
+      }
+
+      .taskbar {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        display: flex;
+        height: 48px;
+        align-items: center;
+        justify-content: center;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(30, 31, 35, 0.86);
+        backdrop-filter: blur(24px);
+        font-family: "Segoe UI Variable Text", "Segoe UI", var(--sans);
+      }
+
+      .taskbar__apps {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .search {
+        display: flex;
+        width: 200px;
+        height: 32px;
+        align-items: center;
+        gap: 8px;
+        margin-right: 8px;
+        padding: 0 12px;
+        border-radius: 16px;
+        color: var(--text-soft);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 12px;
+      }
+
+      .search svg,
+      .taskbar__tray svg {
+        width: 14px;
+        height: 14px;
+        fill: none;
+        stroke: var(--text);
+        stroke-width: 1.2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .app-icon {
+        position: relative;
+        display: grid;
+        width: 40px;
+        height: 40px;
+        place-items: center;
+        border-radius: 6px;
+      }
+
+      .app-icon svg { width: 24px; height: 24px; }
+      .app-icon.is-open { background: rgba(255, 255, 255, 0.07); }
+
+      .app-icon.is-open::after {
+        content: "";
+        position: absolute;
+        bottom: 2px;
+        width: 16px;
+        height: 3px;
+        border-radius: 2px;
+        background: var(--red);
+      }
+
+      svg.vp,
+      .taskbar__tray svg.vp {
+        fill: none;
+        stroke: var(--red);
+        stroke-width: 1.5;
+        stroke-linejoin: round;
+      }
+
+      .app-icon svg.vp { width: 20px; height: 20px; }
+
+      .taskbar__tray {
+        position: absolute;
+        right: 12px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .clock {
+        color: var(--text);
+        font-size: 11px;
+        line-height: 1.35;
+        text-align: right;
+      }
+
+      .tray-tip {
+        position: absolute;
+        right: 116px;
+        bottom: 56px;
+        padding: 8px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: #2b2b2e;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        color: var(--text);
+        font-family: "Segoe UI Variable Text", "Segoe UI", var(--sans);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .tray-tip span { color: var(--text-soft); }
+
+      /* ---- Steps ---- */
+
+      .step {
+        padding: 120px 0 0;
+        text-align: center;
+      }
+
+      .step__num {
+        color: var(--red-text);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+
+      .step h2,
+      .section-title {
+        margin-top: 12px;
+        font-family: var(--serif);
+        font-size: 44px;
+        font-weight: 500;
+        letter-spacing: -0.015em;
+        line-height: 1.15;
+      }
+
+      .step__lede {
+        max-width: 560px;
+        margin: 16px auto 0;
+        color: var(--text-soft);
+        font-size: 17px;
+        line-height: 1.6;
+      }
+
+      .pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-top: 48px;
+        text-align: left;
+      }
+
+      .panel {
+        display: flex;
+        min-height: 440px;
+        flex-direction: column;
+        padding: 36px 36px 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--frame);
+      }
+
+      .panel h3 {
+        font-family: var(--serif);
+        font-size: 24px;
+        font-weight: 500;
+        text-align: center;
+      }
+
+      .panel > p {
+        margin-top: 8px;
+        color: var(--text-soft);
+        font-size: 15px;
+        text-align: center;
+      }
+
+      .panel__stage {
+        display: flex;
+        flex: 1;
+        align-items: flex-end;
+        justify-content: center;
+        margin-top: 32px;
+      }
+
+      .panel__stage > * {
+        width: 100%;
+        max-width: 420px;
+      }
+
+
+      .sheet { background: var(--bg); }
+
+      .sheet .app { padding: 0; }
+
+      .connect li {
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+      }
+
+      .connect { margin: 0; padding: 0; border-top: 1px solid var(--line); list-style: none; }
+      .connect li > span { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+      .connect b { font-weight: 500; }
+      .connect p { margin-top: 2px; color: var(--text-soft); font-size: 11px; }
+
+      .sheet h4 {
+        margin: 0 0 4px;
+        font-size: 18px;
+        font-weight: 600;
+      }
+
+      .sheet .sub {
+        color: var(--text-soft);
+        font-size: 12px;
+      }
+
+      .field { margin-top: 14px; }
+
+      .field span {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text-soft);
+        font-size: 11px;
+        font-weight: 500;
+      }
+
+      .field div {
+        display: flex;
+        height: 32px;
+        align-items: center;
+        padding: 0 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        font-size: 12px;
+      }
+
+      .field-pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      /* The viewer's side: a prediction as it appears on the channel. */
+      .twitch { padding: 20px; }
+
+      .twitch__top {
+        display: flex;
+        justify-content: space-between;
+        color: var(--text-soft);
+        font-size: 11px;
+      }
+
+      .twitch__top time { font-family: var(--mono); }
+
+      .twitch h4 {
+        margin: 10px 0 16px;
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .outcomes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .outcome {
+        padding: 12px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .outcome b {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .outcome strong {
+        display: block;
+        margin-top: 8px;
+        font-family: var(--mono);
+        font-size: 22px;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .outcome small {
+        display: block;
+        margin-top: 2px;
+        color: var(--text-soft);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+
+      .outcome.a b, .outcome.a strong { color: var(--blue); }
+      .outcome.b b, .outcome.b strong { color: var(--pink); }
+
+      .bar {
+        display: flex;
+        height: 6px;
+        gap: 3px;
+        margin-top: 14px;
+      }
+
+      .bar i:first-child { width: 62%; border-radius: 3px; background: var(--blue); }
+      .bar i:last-child { flex: 1; border-radius: 3px; background: var(--pink); }
+
+      .result {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        margin-top: 16px;
+        border-radius: 10px;
+        background: rgba(74, 141, 248, 0.12);
+        font-size: 13px;
+      }
+
+      .result b { color: var(--blue); font-weight: 600; }
+      .result span { margin-left: auto; color: var(--text-soft); font-family: var(--mono); font-size: 11px; }
+
+      /* ---- Feature grid ---- */
+
+      .features {
+        padding: 120px 0 0;
+        text-align: center;
+      }
+
+      .features .step__lede { margin-bottom: 48px; }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--line);
+        text-align: left;
+      }
+
+      .grid div {
+        padding: 28px;
+        background: var(--frame);
+      }
+
+      .grid b {
+        display: block;
+        font-size: 15px;
+        font-weight: 500;
+      }
+
+      .grid p {
+        margin-top: 6px;
+        color: var(--text-soft);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      /* ---- FAQ ---- */
+
+      .faq {
+        width: min(720px, 100%);
+        margin: 0 auto;
+        padding: 120px 0 0;
+      }
+
+      .faq .section-title { text-align: center; margin-bottom: 40px; }
+
+      .faq details {
+        border-bottom: 1px solid var(--line);
+      }
+
+      .faq summary {
+        display: flex;
+        min-height: 64px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        cursor: pointer;
+        font-size: 17px;
+        font-weight: 500;
+        list-style: none;
+      }
+
+      .faq summary::-webkit-details-marker { display: none; }
+
+      .faq summary::after {
+        content: "";
+        width: 8px;
+        height: 8px;
+        flex: none;
+        margin-top: -4px;
+        transform: rotate(45deg);
+        border: solid var(--muted);
+        border-width: 0 1.5px 1.5px 0;
+        transition: transform 160ms var(--ease);
+      }
+
+      .faq details[open] summary::after { margin-top: 4px; transform: rotate(-135deg); }
+
+      .faq details p {
+        padding: 0 0 24px;
+        color: var(--text-soft);
+        font-size: 15px;
+        line-height: 1.65;
+      }
+
+      /* ---- Closing ---- */
+
+      .closing {
+        padding: 140px 0 120px;
+        text-align: center;
+      }
+
+      .closing h2 {
+        font-family: var(--serif);
+        font-size: 52px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+      }
+
+      .closing p {
+        margin-top: 16px;
+        color: var(--text-soft);
+        font-size: 18px;
+      }
+
+      .closing .pill { margin-top: 32px; }
+
+      .closing small {
+        display: block;
+        margin-top: 16px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .footer {
+        border-top: 1px solid var(--line);
+      }
+
+      .footer .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 32px 0 40px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .footer nav { display: flex; gap: 24px; }
+      .footer a { text-decoration: none; }
+      .footer a:hover { color: var(--text); }
+
+
+      /* ---- Motion: one curve, short feedback, gentle entrances ---- */
+
+      .motion .reveal {
+        opacity: 0;
+        transform: translateY(16px);
+        transition:
+          opacity 700ms var(--ease) var(--d, 0ms),
+          transform 700ms var(--ease) var(--d, 0ms);
+      }
+
+      .motion .reveal.is-in {
+        opacity: 1;
+        transform: none;
+      }
+
+      .motion .showcase.reveal { transform: translateY(32px) scale(0.985); }
+      .motion .showcase.reveal.is-in { transform: none; }
+
+      .motion .tray-tip {
+        opacity: 0;
+        transform: translateY(6px);
+        transition: opacity 400ms var(--ease) 900ms, transform 400ms var(--ease) 900ms;
+      }
+
+      .motion .showcase.is-in .tray-tip {
+        opacity: 1;
+        transform: none;
+      }
+
+      /* Live dots breathe: they are the only thing on the page that is actually live. */
+      .tag i { position: relative; }
+
+      .motion .tag i::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: var(--red);
+        animation: breathe 2.4s var(--ease) infinite;
+      }
+
+      @keyframes breathe {
+        0% { opacity: 0.6; transform: scale(1); }
+        70%, 100% { opacity: 0; transform: scale(2.6); }
+      }
+
+      /* Prediction split: a fill that slides instead of re-laying out. */
+      .bar {
+        position: relative;
+        display: block;
+        overflow: hidden;
+        border-radius: 3px;
+        background: var(--pink);
+      }
+
+      .bar i:first-child {
+        position: absolute;
+        inset: 0;
+        width: auto;
+        border-radius: 0;
+        box-shadow: 3px 0 0 #0e0e10;
+        transform: scaleX(0.62);
+        transform-origin: left;
+        transition: transform 700ms var(--ease);
+      }
+
+      .bar i:last-child { display: none; }
+
+      .outcome strong { transition: color 200ms var(--ease); }
+
+      .result {
+        transition: opacity 500ms var(--ease), transform 500ms var(--ease);
+      }
+
+      .motion .result.is-waiting {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      .typing::after {
+        content: "";
+        display: inline-block;
+        width: 1px;
+        height: 14px;
+        margin-left: 1px;
+        vertical-align: -2px;
+        background: var(--text);
+        animation: caret 1s steps(1) infinite;
+      }
+
+      @keyframes caret {
+        50% { opacity: 0; }
+      }
+
+      .field div.is-focus { border-color: rgba(255, 255, 255, 0.32); }
+
+      .phases li::before { transition: background-color 400ms var(--ease); }
+
+      /* Feedback */
+      .panel { transition: border-color 200ms var(--ease); }
+      .panel:hover { border-color: var(--line-strong); }
+      .grid div { transition: background-color 200ms var(--ease); }
+      .grid div:hover { background: #17181c; }
+      .pill { transition: background-color 160ms var(--ease), transform 160ms var(--ease); }
+      .pill:active { transform: scale(0.98); }
+
+      .nav { transition: border-color 200ms var(--ease); }
+      .nav.is-scrolled { border-bottom-color: var(--line); }
+
+      .motion .faq details[open] p { animation: open 300ms var(--ease); }
+
+      @keyframes open {
+        from { opacity: 0; transform: translateY(-4px); }
+      }
+
+      /* ---- Small screens ---- */
+
+      @media (max-width: 900px) {
+        .wrap { width: calc(100% - 32px); }
+        .nav__links { display: none; }
+        .nav .wrap { justify-content: space-between; }
+
+        .hero { padding: 56px 0 40px; }
+        .hero h1 { font-size: 40px; }
+        .hero__lede { font-size: 16px; }
+
+        .showcase { padding: 20px 12px 64px; border-radius: 20px; }
+        .search, .tray-tip, .taskbar__tray svg:not(.vp) { display: none; }
+        .taskbar__apps { margin-right: 72px; }
+        .app { padding: 16px 12px 24px; }
+
+        .step, .features, .faq { padding-top: 88px; }
+        .step h2, .section-title { font-size: 32px; }
+        .step__lede { font-size: 16px; }
+
+        .pair { grid-template-columns: 1fr; margin-top: 32px; }
+        .panel { min-height: 0; padding: 28px 16px 0; border-radius: 20px; }
+        .grid { grid-template-columns: 1fr; border-radius: 20px; }
+
+        .closing { padding: 96px 0 80px; }
+        .closing h2 { font-size: 36px; }
+
+        .footer .wrap { flex-direction: column; align-items: flex-start; }
+      }
+
+      @media (max-width: 520px) {
+        .row { grid-template-columns: 1fr auto; }
+        .row span { display: none; }
+        .who span { display: none; }
+        .btns { flex-wrap: wrap; }
+        .state .btn { display: none; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        * { transition-duration: 0.01ms !important; }
+      }
+    </style>
+    <script>
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        document.documentElement.classList.add("motion");
+      }
+    </script>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap">
+        <a class="brand" href="#">
+          <svg class="mark" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" />
+            <path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" />
+          </svg>
+          ValorPredict
+        </a>
+        <nav class="nav__links" aria-label="Sections">
+          <a href="#how">How it works</a>
+          <a href="#features">Features</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <a class="pill" href="https://github.com/AntiParty/ValorPredict">Follow on GitHub</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero wrap">
+        <h1>Twitch predictions for<br /><em>“I forgot to start one”</em> streamers</h1>
+        <p class="hero__lede">
+          ValorPredict opens a Channel Points prediction when your Valorant match starts
+          and pays it out when it ends, <span class="chip">straight from the match result</span>
+          so you never have to alt-tab.
+        </p>
+        <div class="hero__cta">
+          <a class="pill big" href="https://github.com/AntiParty/ValorPredict">Follow on GitHub</a>
+          <span class="hero__meta"><i aria-hidden="true"></i>Coming soon for Windows · Free and open source</span>
+        </div>
+      </section>
+
+      <div class="wrap">
+        <div class="showcase">
+          <div class="window" role="img" aria-label="The ValorPredict window during a competitive match, with a live prediction open">
+            <div class="titlebar">
+              <svg class="mark" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" />
+                <path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" />
+              </svg>
+              ValorPredict
+              <span class="grow"></span>
+              <span class="who"><b>NV</b><span>nightjar_val</span></span>
+              <span class="ctrl"><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></span><span class="ctrl close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10" /></svg></span>
+            </div>
+            <div class="app">
+              <div class="card live">
+                <div class="live__head">
+                  <span class="tag"><i></i>Live</span>
+                  Will nightjar_val win this match?
+                  <time>Started 3 min ago</time>
+                </div>
+                <div class="btns">
+                  <span class="btn">Resolve: Win</span>
+                  <span class="btn">Resolve: Loss</span>
+                  <span class="btn danger">Cancel prediction</span>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="state">
+                  <i></i>
+                  <div>
+                    <h3>Match detected</h3>
+                    <p>Competitive match in progress. Competitive is on, Custom is off.</p>
+                  </div>
+                  <span class="btn">Stop monitoring</span>
+                </div>
+                <ol class="phases">
+                  <li class="past">Menus</li>
+                  <li class="past">Agent select</li>
+                  <li class="now">In match</li>
+                  <li>Result</li>
+                </ol>
+              </div>
+
+              <p class="label">Prediction presets</p>
+              <div class="rows">
+                <div class="row">
+                  <b>Competitive</b>
+                  <span>Will nightjar_val win this match?</span>
+                  <i class="switch on"></i>
+                </div>
+                <div class="row off">
+                  <b>Custom</b>
+                  <span>Custom: does nightjar_val win?</span>
+                  <i class="switch"></i>
+                </div>
+              </div>
+
+              <ul class="events">
+                <li>
+                  <i class="green"></i>
+                  <div><b>Prediction resolved</b><p>Resolved to Win after a 13-9 match on Ascent</p></div>
+                  <span class="meta">48 min ago</span>
+                </li>
+                <li>
+                  <i></i>
+                  <div><b>Prediction started</b><p>Opened “Will nightjar_val win this match?” for 120 seconds</p></div>
+                  <span class="meta">1 h ago</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div class="tray-tip" aria-hidden="true">ValorPredict<br /><span>Match detected · prediction open</span></div>
+          <div class="taskbar" aria-hidden="true">
+            <div class="taskbar__apps">
+              <span class="search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg>Search</span>
+              <span class="app-icon"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" fill="#e3b341" /><path d="M3 10h18v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" fill="#f2c94c" /></svg></span>
+              <span class="app-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="#2f7de1" /><path d="M3.5 12h17M12 3.5c2.5 2.5 2.5 14.5 0 17M12 3.5c-2.5 2.5-2.5 14.5 0 17" stroke="#cfe3ff" stroke-width="1.2" fill="none" /></svg></span>
+              <span class="app-icon is-open"><svg viewBox="0 0 16 16" class="vp"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" /><path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" /></svg></span>
+            </div>
+            <div class="taskbar__tray">
+              <svg viewBox="0 0 16 16"><path d="m4 10 4-4 4 4" /></svg>
+              <svg viewBox="0 0 16 16" class="vp"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" /><path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" /></svg>
+              <svg viewBox="0 0 16 16"><path d="M2 6.5a9 9 0 0 1 12 0M4 9a5.5 5.5 0 0 1 8 0M6.2 11.4a2.4 2.4 0 0 1 3.6 0" /></svg>
+              <svg viewBox="0 0 16 16"><path d="M3 6h2l3-3v10l-3-3H3ZM10.5 5.5a3.5 3.5 0 0 1 0 5M12.5 3.5a6.4 6.4 0 0 1 0 9" /></svg>
+              <span class="clock">9:41 PM<br />11/23/2026</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section class="step wrap" id="how">
+        <p class="step__num">Step 1</p>
+        <h2>Connect Twitch once</h2>
+        <p class="step__lede">
+          Sign in with Twitch in your browser and paste the code back. No developer account,
+          no keys to copy around.
+        </p>
+        <div class="pair">
+          <article class="panel">
+            <h3>Sign in with Twitch</h3>
+            <p>Two clicks, then it remembers you</p>
+            <div class="panel__stage">
+              <div class="window"><div class="titlebar"><svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" /><path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" /></svg>ValorPredict<span class="grow"></span><span class="ctrl"><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></span><span class="ctrl close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10" /></svg></span></div><div class="sheet window__body">
+                <h4>Connect your Twitch account</h4>
+                <p class="sub">Predictions need a Twitch Affiliate or Partner account</p>
+                <ol class="connect" style="margin-top: 16px">
+                  <li>
+                    <span>1</span>
+                    <div><b>Sign in with Twitch</b><p>Opens your browser</p></div>
+                    <i class="btn light">Connect Twitch</i>
+                  </li>
+                  <li>
+                    <span>2</span>
+                    <div><b>Paste the code here</b><p>Expires after 10 minutes</p></div>
+                    <i class="btn">Paste</i>
+                  </li>
+                </ol>
+              </div></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Write it your way</h3>
+            <p>Your title, your outcomes, your timer</p>
+            <div class="panel__stage">
+              <div class="window"><div class="titlebar"><svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" /><path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" /></svg>ValorPredict<span class="grow"></span><span class="ctrl"><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></span><span class="ctrl close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10" /></svg></span></div><div class="sheet window__body">
+                <h4>Competitive preset</h4>
+                <div class="field"><span>Prediction title</span><div id="type-title">Will {streamer} win this match?</div></div>
+                <div class="field-pair">
+                  <div class="field"><span>Outcome A</span><div>Win</div></div>
+                  <div class="field"><span>Outcome B</span><div>Loss</div></div>
+                </div>
+                <div class="field"><span>Prediction duration</span><div>120 seconds</div></div>
+              </div></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="step wrap">
+        <p class="step__num">Step 2</p>
+        <h2>Queue up and play</h2>
+        <p class="step__lede">
+          ValorPredict sits in the tray and follows the match. The moment you lock in,
+          your chat gets a prediction to bet on.
+        </p>
+        <div class="pair">
+          <article class="panel">
+            <h3>It knows where you are</h3>
+            <p>From the menus to the final round</p>
+            <div class="panel__stage">
+              <div class="window"><div class="titlebar"><svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" /><path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" /></svg>ValorPredict<span class="grow"></span><span class="ctrl"><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></span><span class="ctrl close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10" /></svg></span></div><div class="sheet window__body" aria-label="Match phase moving from menus to the result">
+                <div class="state">
+                  <i id="demo-dot"></i>
+                  <div>
+                    <h3 id="demo-title">Match detected</h3>
+                    <p id="demo-detail">Competitive match in progress</p>
+                  </div>
+                </div>
+                <ol class="phases" id="demo-phases">
+                  <li class="past">Menus</li>
+                  <li class="past">Agent select</li>
+                  <li class="now">In match</li>
+                  <li>Result</li>
+                </ol>
+              </div></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Chat gets a prediction</h3>
+            <p>Opened on your channel, no alt-tab</p>
+            <div class="panel__stage">
+              <div class="window browser"><div class="tabs"><span class="tab"><i class="favicon"></i>nightjar_val - Twitch</span><span class="grow"></span><span class="ctrl"><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></span><span class="ctrl"><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1.5" /></svg></span><span class="ctrl close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10" /></svg></span></div><div class="addressbar"><span class="nav-glyphs"><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5" /></svg><svg viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" /></svg><svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 3v3h-3" /></svg></span><span class="url"><svg viewBox="0 0 16 16"><rect x="4" y="7" width="8" height="6" rx="1" /><path d="M6 7V5a2 2 0 0 1 4 0v2" /></svg>twitch.tv/nightjar_val</span></div><div class="twitch">
+                <div class="twitch__top"><span>Prediction</span><time id="pred-time">2:00 left</time></div>
+                <h4>Will nightjar_val win this match?</h4>
+                <div class="outcomes">
+                  <div class="outcome a"><b>Win</b><strong id="pred-a-pct">62%</strong><small id="pred-a-pts">48,210 points</small></div>
+                  <div class="outcome b"><b>Loss</b><strong id="pred-b-pct">38%</strong><small id="pred-b-pts">29,540 points</small></div>
+                </div>
+                <div class="bar" id="pred-bar"><i></i><i></i></div>
+              </div></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="step wrap">
+        <p class="step__num">Step 3</p>
+        <h2>It pays out on its own</h2>
+        <p class="step__lede">
+          When the match ends, the result decides the winner and the points go out.
+          If you want to call it yourself, you still can.
+        </p>
+        <div class="pair">
+          <article class="panel">
+            <h3>Resolved from the result</h3>
+            <p>Win or loss, read from the finished match</p>
+            <div class="panel__stage">
+              <div class="window browser"><div class="tabs"><span class="tab"><i class="favicon"></i>nightjar_val - Twitch</span><span class="grow"></span><span class="ctrl"><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></span><span class="ctrl"><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1.5" /></svg></span><span class="ctrl close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10" /></svg></span></div><div class="addressbar"><span class="nav-glyphs"><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5" /></svg><svg viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" /></svg><svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 3v3h-3" /></svg></span><span class="url"><svg viewBox="0 0 16 16"><rect x="4" y="7" width="8" height="6" rx="1" /><path d="M6 7V5a2 2 0 0 1 4 0v2" /></svg>twitch.tv/nightjar_val</span></div><div class="twitch">
+                <div class="twitch__top"><span>Prediction ended</span><time>13-9</time></div>
+                <h4>Will nightjar_val win this match?</h4>
+                <div class="result" id="payout"><b>Win</b> paid out to 1,204 viewers<span id="payout-pts">48,210 → 77,750</span></div>
+              </div></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Or call it yourself</h3>
+            <p>Resolve or cancel from the app any time</p>
+            <div class="panel__stage">
+              <div class="window"><div class="titlebar"><svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" /><path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" /></svg>ValorPredict<span class="grow"></span><span class="ctrl"><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></span><span class="ctrl close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10" /></svg></span></div><div class="sheet window__body">
+                <div class="card live">
+                  <div class="live__head">
+                    <span class="tag"><i></i>Live</span>
+                    Will nightjar_val win?
+                  </div>
+                  <div class="btns">
+                    <span class="btn">Resolve: Win</span>
+                    <span class="btn">Resolve: Loss</span>
+                    <span class="btn danger">Cancel</span>
+                  </div>
+                </div>
+              </div></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="features wrap" id="features">
+        <h2 class="section-title">Built to stay out of your way</h2>
+        <p class="step__lede">You are live and in a match. It should not need you.</p>
+        <div class="grid">
+          <div><b>Runs from the tray</b><p>Close the window and it keeps watching. Open it again only when you want to.</p></div>
+          <div><b>Competitive and custom presets</b><p>Turn each on or off, with its own title, outcomes and timer.</p></div>
+          <div><b>Test before you go live</b><p>Send one real test prediction and cancel it from the app.</p></div>
+          <div><b>No screen capture</b><p>No OCR, no overlay, no reading pixels. It reads the match state the Riot Client already exposes.</p></div>
+          <div><b>Never touches the game</b><p>No memory reading, no injection, nothing near Vanguard. Every check is read-only.</p></div>
+          <div><b>Free and open source</b><p>MIT licensed. Read exactly what it does, line by line, on GitHub.</p></div>
+        </div>
+      </section>
+
+      <section class="faq wrap" id="faq">
+        <h2 class="section-title">Questions</h2>
+        <details>
+          <summary>Who can use it?</summary>
+          <p>Any Valorant streamer on Windows whose Twitch channel can run Channel Points Predictions. Twitch only allows predictions on Affiliate and Partner channels.</p>
+        </details>
+        <details>
+          <summary>Can it get my account banned?</summary>
+          <p>ValorPredict does not read or write game memory, inject code, capture your screen or touch Vanguard. It only reads the local data the Riot Client already provides and Riot's match-state services, and it never sends anything to the game. The full list of what it reads is in the README, with links to the code for each step.</p>
+        </details>
+        <details>
+          <summary>What does it cost?</summary>
+          <p>Nothing. ValorPredict is free and open source under the MIT license.</p>
+        </details>
+        <details>
+          <summary>When can I download it?</summary>
+          <p>Soon. Follow the GitHub repository to see the first release when it ships.</p>
+        </details>
+      </section>
+
+      <section class="closing wrap">
+        <h2>Play the match.<br />Let chat bet on it.</h2>
+        <p>Your predictions open and pay out while you focus on the round</p>
+        <a class="pill big" href="https://github.com/AntiParty/ValorPredict">Follow on GitHub</a>
+        <small>Coming soon for Windows</small>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap">
+        <a class="brand" href="#">
+          <svg class="mark" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" />
+            <path d="M8 5.5 10.5 8 8 10.5 5.5 8Z" />
+          </svg>
+          ValorPredict
+        </a>
+        <span>Not endorsed by Riot Games. Valorant is a trademark of Riot Games, Inc.</span>
+        <nav aria-label="Footer">
+          <a href="#how">How it works</a>
+          <a href="#faq">FAQ</a>
+          <a href="https://github.com/AntiParty/ValorPredict">GitHub</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        var motion = document.documentElement.classList.contains("motion");
+
+        // Nav gets a hairline once the page scrolls under it.
+        var nav = document.querySelector(".nav");
+        var onScroll = function () { nav.classList.toggle("is-scrolled", scrollY > 8); };
+        addEventListener("scroll", onScroll, { passive: true });
+        onScroll();
+
+        if (!motion) return;
+
+        // Runs `enter` each time an element scrolls into view, and `leave` when it goes.
+        function watch(el, enter, leave, threshold) {
+          new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) enter(entry.target);
+              else if (leave) leave(entry.target);
+            });
+          }, { threshold: threshold || 0.35 }).observe(el);
+        }
+
+        // ---- Entrances: fade and rise once, siblings a beat apart ----
+        var groups = [
+          [".hero h1", ".hero__lede", ".hero__cta"],
+          [".showcase"],
+        ];
+        groups.forEach(function (selectors) {
+          selectors.forEach(function (sel, i) {
+            var el = document.querySelector(sel);
+            el.classList.add("reveal");
+            el.style.setProperty("--d", 120 + i * 90 + "ms");
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () { el.classList.add("is-in"); });
+            });
+          });
+        });
+        document.querySelector(".showcase").style.setProperty("--d", "380ms");
+
+        var stagger = [
+          ".step__num", ".step h2", ".section-title", ".step__lede",
+          ".panel", ".grid > div", ".faq details", ".closing > *",
+        ];
+        document.querySelectorAll(stagger.join(",")).forEach(function (el) {
+          el.classList.add("reveal");
+          var siblings = Array.prototype.filter.call(el.parentNode.children, function (c) {
+            return c.matches(stagger.join(","));
+          });
+          el.style.setProperty("--d", Math.min(siblings.indexOf(el), 5) * 80 + "ms");
+          var io = new IntersectionObserver(function (entries) {
+            if (entries[0].isIntersecting) {
+              el.classList.add("is-in");
+              io.disconnect();
+            }
+          }, { threshold: 0.15, rootMargin: "0px 0px -40px 0px" });
+          io.observe(el);
+        });
+
+        // ---- Step 1: the preset title types itself ----
+        var typeEl = document.getElementById("type-title");
+        var fullTitle = typeEl.textContent;
+        var typeTimer = null;
+        watch(typeEl, function () {
+          if (typeTimer) return;
+          var n = 0;
+          typeEl.textContent = "";
+          typeEl.classList.add("typing", "is-focus");
+          setTimeout(function step() {
+            n += 1;
+            typeEl.textContent = fullTitle.slice(0, n);
+            if (n < fullTitle.length) typeTimer = setTimeout(step, 38 + Math.random() * 40);
+            else typeTimer = setTimeout(function () {
+              typeEl.classList.remove("typing", "is-focus");
+            }, 1200);
+          }, 500);
+        }, null, 0.6);
+
+        // ---- Step 2: the phase track follows a match ----
+        var frames = [
+          { title: "Watching for a match", detail: "Valorant is in the menus", dot: "green", at: 0 },
+          { title: "Preparing for match", detail: "Valorant is in agent select", dot: "", at: 1 },
+          { title: "Match detected", detail: "Competitive match in progress", dot: "", at: 2 },
+          { title: "Match finished", detail: "Resolved to Win, 13-9", dot: "green", at: 3 },
+        ];
+        var phases = document.querySelectorAll("#demo-phases li");
+        var demoTitle = document.getElementById("demo-title");
+        var demoDetail = document.getElementById("demo-detail");
+        var demoDot = document.getElementById("demo-dot");
+        var frame = 0;
+        var phaseTimer = null;
+
+        function showFrame(f) {
+          demoTitle.textContent = f.title;
+          demoDetail.textContent = f.detail;
+          demoDot.className = f.dot;
+          phases.forEach(function (li, i) {
+            li.className = i === f.at ? "now" : i < f.at ? "past" : "";
+          });
+        }
+
+        watch(document.getElementById("demo-phases"), function () {
+          if (phaseTimer) return;
+          showFrame(frames[frame]);
+          phaseTimer = setInterval(function () {
+            frame = (frame + 1) % frames.length;
+            showFrame(frames[frame]);
+          }, 2200);
+        }, function () {
+          clearInterval(phaseTimer);
+          phaseTimer = null;
+        });
+
+        // ---- Step 2: chat bets on the prediction while the timer runs down ----
+        var fmt = function (n) { return Math.round(n).toLocaleString("en-US"); };
+        var pred = {
+          time: document.getElementById("pred-time"),
+          aPct: document.getElementById("pred-a-pct"),
+          bPct: document.getElementById("pred-b-pct"),
+          aPts: document.getElementById("pred-a-pts"),
+          bPts: document.getElementById("pred-b-pts"),
+          bar: document.querySelector("#pred-bar i"),
+        };
+        var seconds, a, b, predTimer = null;
+
+        function resetPrediction() {
+          seconds = 120;
+          a = 18400;
+          b = 12100;
+          renderPrediction();
+        }
+
+        function renderPrediction() {
+          var share = a / (a + b);
+          var m = Math.floor(seconds / 60);
+          var s = String(seconds % 60).padStart(2, "0");
+          pred.time.textContent = seconds > 0 ? m + ":" + s + " left" : "Locked";
+          pred.aPct.textContent = Math.round(share * 100) + "%";
+          pred.bPct.textContent = 100 - Math.round(share * 100) + "%";
+          pred.aPts.textContent = fmt(a) + " points";
+          pred.bPts.textContent = fmt(b) + " points";
+          pred.bar.style.transform = "scaleX(" + share.toFixed(3) + ")";
+        }
+
+        resetPrediction();
+        watch(pred.bar.parentNode, function () {
+          if (predTimer) return;
+          predTimer = setInterval(function () {
+            if (seconds <= 0) {
+              resetPrediction();
+              return;
+            }
+            seconds -= 1;
+            // Viewers pile in, a little more often on Win.
+            if (Math.random() < 0.7) a += 150 + Math.random() * 900;
+            if (Math.random() < 0.5) b += 100 + Math.random() * 700;
+            renderPrediction();
+          }, 1000);
+        }, function () {
+          clearInterval(predTimer);
+          predTimer = null;
+        });
+
+        // ---- Step 3: the payout lands and the points count up ----
+        var payout = document.getElementById("payout");
+        var payoutPts = document.getElementById("payout-pts");
+        payout.classList.add("is-waiting");
+        watch(payout, function () {
+          if (!payout.classList.contains("is-waiting")) return;
+          setTimeout(function () {
+            payout.classList.remove("is-waiting");
+            var from = 48210, to = 77750, start = null;
+            requestAnimationFrame(function tick(ts) {
+              if (start === null) start = ts;
+              var k = Math.min((ts - start) / 1400, 1);
+              var eased = 1 - Math.pow(1 - k, 3);
+              payoutPts.textContent = fmt(from) + " → " + fmt(from + (to - from) * eased);
+              if (k < 1) requestAnimationFrame(tick);
+            });
+          }, 500);
+        }, null, 0.6);
+      })();
+    </script>
+  </body>
+</html>

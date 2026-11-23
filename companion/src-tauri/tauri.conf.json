@@ -17,11 +17,12 @@
         "height": 800,
         "minWidth": 560,
         "minHeight": 640,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: https://static-cdn.jtvnw.net; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

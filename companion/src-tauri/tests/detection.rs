@@ -173,3 +173,86 @@ fn detector_applies_a_ten_minute_per_match_cooldown() {
         DetectionDecision::Send(first)
     );
 }
+
+#[test]
+fn riot_is_only_contacted_while_valorant_is_running() {
+    use valorpredict_lib::valorant_detector::{can_fetch_result, idle_snapshot, needs_riot_session};
+
+    let both = ProcessSignals {
+        riot_client_running: true,
+        valorant_running: true,
+    };
+    let riot_only = ProcessSignals {
+        riot_client_running: true,
+        valorant_running: false,
+    };
+    let valorant_only = ProcessSignals {
+        riot_client_running: false,
+        valorant_running: true,
+    };
+    assert!(needs_riot_session(both));
+    assert!(!needs_riot_session(riot_only));
+    assert!(!needs_riot_session(valorant_only));
+    assert!(!needs_riot_session(ProcessSignals::default()));
+
+    // Result lookups may use a held session after VALORANT closes, never without one.
+    assert!(can_fetch_result(both, false));
+    assert!(can_fetch_result(riot_only, true));
+    assert!(!can_fetch_result(riot_only, false));
+    assert!(!can_fetch_result(valorant_only, true));
+
+    let idle = idle_snapshot(riot_only, true);
+    assert_eq!(idle.state, ValorantLocalState::NotRunning);
+    assert!(idle.processes.riot_client_running);
+    assert!(idle.lockfile_found);
+    assert_eq!(idle.evidence, vec!["valorant_process_not_found"]);
+    assert_eq!(
+        idle_snapshot(ProcessSignals::default(), false).evidence,
+        vec!["riot_client_process_not_found"]
+    );
+}
+
+#[test]
+fn poll_delay_follows_the_state_table() {
+    use valorpredict_lib::valorant_detector::next_poll_delay;
+
+    let secs = |state: ValorantLocalState, active: bool| next_poll_delay(&state, active).as_secs();
+    let cases = [
+        (ValorantLocalState::NotRunning, false, 20),
+        (ValorantLocalState::Menus, false, 15),
+        (ValorantLocalState::Unknown, false, 15),
+        (ValorantLocalState::PreGame, false, 5),
+        (ValorantLocalState::CurrentGame, false, 20),
+        // In a match with a prediction open.
+        (ValorantLocalState::CurrentGame, true, 20),
+        // Match over, waiting for the result.
+        (ValorantLocalState::Menus, true, 10),
+        (ValorantLocalState::NotRunning, true, 10),
+        (ValorantLocalState::Unknown, true, 10),
+        // Agent select is always fast.
+        (ValorantLocalState::PreGame, true, 5),
+    ];
+    for (state, active, expected) in cases {
+        assert_eq!(secs(state.clone(), active), expected, "{state:?} active={active}");
+    }
+}
+
+#[test]
+fn old_settings_files_with_a_poll_interval_still_load() {
+    use valorpredict_lib::models::AppSettings;
+
+    let old: AppSettings =
+        serde_json::from_str(r#"{"pollIntervalSeconds":30,"monitoringEnabled":true}"#).unwrap();
+    assert!(old.monitoring_enabled);
+    let without: AppSettings = serde_json::from_str(r#"{"monitoringEnabled":true}"#).unwrap();
+    assert_eq!(without.poll_interval_seconds, 15);
+}
+
+#[test]
+fn status_payload_has_no_logs() {
+    use valorpredict_lib::models::ValorantDetectionStatus;
+
+    let json = serde_json::to_value(ValorantDetectionStatus::default()).unwrap();
+    assert!(json.get("logs").is_none());
+    assert!(json.get("cooldownRemainingSeconds").is_some());
+}

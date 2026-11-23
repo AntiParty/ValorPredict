@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { companionApi } from "./api";
+import { AccountMenu } from "./components/AccountMenu";
 import { BootstrapError } from "./components/BootstrapError";
-import { MonitorSection } from "./components/MonitorSection";
-import { Brand } from "./components/predictions/Brand";
-import { HostedConnectStep } from "./components/predictions/HostedConnectStep";
+import { AppFrame } from "./components/Titlebar";
 import { OnboardingWizard } from "./components/predictions/OnboardingWizard";
-import { PredictionsDashboard } from "./components/predictions/PredictionsDashboard";
+import { Workspace } from "./components/Workspace";
 import { friendlyError, type UserFacingError } from "./errors";
-import { initials } from "./format";
-import type { MeResponse } from "./types";
+import { useDashboard } from "./hooks/useDashboard";
+import { useBackendEvent } from "./hooks/useBackendEvent";
+import { WindowVisibleProvider } from "./hooks/useWindowVisible";
+import type { MeResponse, SafeUser } from "./types";
 
 const FALLBACK_REDIRECT = "http://localhost:3000/auth/twitch/callback";
 
@@ -63,53 +64,90 @@ export function App() {
     loadMe().catch(() => undefined);
   }, [loadMe]);
 
+  // The reauth flag and the signed-in account change in the backend (`dashboard-changed`
+  // fires for both). Re-read `get_me` quietly and only re-render if something we show differs.
+  useBackendEvent<null>("dashboard-changed", () => {
+    companionApi
+      .getMe()
+      .then((me) =>
+        setAuth((current) => {
+          if (current.status !== "ready") return current;
+          const before = current.me;
+          const same =
+            before.reauthRequired === me.reauthRequired &&
+            before.authMode === me.authMode &&
+            before.configured === me.configured &&
+            before.user?.id === me.user?.id;
+          return same ? current : { status: "ready", me };
+        }),
+      )
+      .catch(() => undefined);
+  });
+
   if (auth.status === "loading") {
     return (
-      <main className="companion-shell">
+      <AppFrame center>
         <div className="route-loading" role="status" aria-live="polite">
           <span className="route-loading__spinner" aria-hidden="true" />
-          <span>Loading…</span>
+          <span>Loading</span>
         </div>
-      </main>
+      </AppFrame>
     );
   }
 
   if (auth.status === "error") {
     return (
-      <BootstrapError
-        error={auth.error}
-        onRetry={() => loadMe().catch(() => undefined)}
-        retrying={retrying}
-      />
+      <AppFrame center>
+        <BootstrapError
+          error={auth.error}
+          onRetry={() => loadMe().catch(() => undefined)}
+          retrying={retrying}
+        />
+      </AppFrame>
     );
   }
 
   const { me } = auth;
   if (!me.user) {
-    return <OnboardingWizard me={me} onAdvance={loadMe} />;
+    return (
+      <AppFrame center>
+        <OnboardingWizard me={me} onAdvance={loadMe} />
+      </AppFrame>
+    );
   }
 
   return (
-    <main className="companion-shell">
-      <header className="companion-header">
-        <Brand />
-        <div className="account">
-          <span className="account-avatar">{initials(me.user.twitch_display_name)}</span>
-          <span className="account-name">{me.user.twitch_login}</span>
-        </div>
-      </header>
-
-      {me.reauthRequired && me.authMode === "hosted" && (
-        <section className="card wizard-card reconnect-card">
-          <HostedConnectStep reconnect onConnected={() => loadMe().catch(() => undefined)} />
-        </section>
-      )}
-
-      <MonitorSection
-        reauthRequired={me.reauthRequired && me.authMode === "own"}
-        onReconnect={loadMe}
+    <WindowVisibleProvider>
+      <ConnectedShell
+        me={me}
+        user={me.user}
+        onReloadMe={() => loadMe().catch(() => undefined)}
       />
-      <PredictionsDashboard />
-    </main>
+    </WindowVisibleProvider>
+  );
+}
+
+// Header and workspace share one dashboard fetch, so the account menu knows whether a
+// prediction is open (disconnecting would strand it).
+function ConnectedShell({
+  me,
+  user,
+  onReloadMe,
+}: {
+  me: MeResponse;
+  user: SafeUser;
+  onReloadMe: () => void;
+}) {
+  const dashboard = useDashboard();
+  const predictionOpen = dashboard.data?.activeSession?.status === "prediction_open";
+
+  return (
+    <AppFrame
+      titlebar={
+        <AccountMenu user={user} predictionOpen={predictionOpen} onDisconnected={onReloadMe} />
+      }
+    >
+      <Workspace me={me} dashboard={dashboard} onReloadMe={onReloadMe} />
+    </AppFrame>
   );
 }

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import { companionApi } from "../../api";
+import { Notice } from "../Notice";
 
 interface Props {
   redirectUri: string;
@@ -30,17 +31,12 @@ export function CredentialsStep({ redirectUri, onBack, onSaved }: Props) {
 
   return (
     <div className="wizard-step">
-      <div className="preset-head">
-        <div>
-          <span className="card-kicker">Step 2</span>
-          <h3>Paste your keys</h3>
-        </div>
-      </div>
+      <h3>Paste your keys</h3>
       <p className="muted-line">
         Open your app in the Twitch console and copy its Client ID and Secret.
         They are stored only on this PC and never sent to a ValorPredict server.
       </p>
-      {error && <div className="pred-notice error">{error}</div>}
+      <Notice notice={error ? { kind: "error", message: error } : null} />
       <form onSubmit={handleSubmit}>
         <label className="field">
           <span>Client ID</span>

@@ -1,164 +1,169 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { companionApi } from "../../api";
-import type { DashboardData, PredictionSession } from "../../types";
+import { dashboard, event, preset } from "../../test/fixtures";
+import type { DashboardData } from "../../types";
 import { PredictionsDashboard } from "./PredictionsDashboard";
 
 vi.mock("../../api", () => ({
-  companionApi: {
-    getDashboard: vi.fn(),
-    loadSettings: vi.fn(),
-    saveSettings: vi.fn(),
-    savePreset: vi.fn(),
-    simulateMatchStart: vi.fn(),
-    resolvePrediction: vi.fn(),
-    cancelPrediction: vi.fn(),
-  },
+  companionApi: { savePreset: vi.fn(), simulateMatchStart: vi.fn() },
 }));
 
-vi.mock("../../hooks/useWindowVisible", () => ({
-  useWindowVisible: () => true,
-}));
-
-const dashboard: DashboardData = {
-  user: {
-    id: 1,
-    twitch_user_id: "42",
-    twitch_login: "test_streamer",
-    twitch_display_name: "Test Streamer",
-    twitch_profile_image_url: null,
-    token_expires_at: "2099-01-01T00:00:00Z",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
-  presets: [
-    {
-      id: 1,
-      twitch_user_id: "42",
-      game_mode: "competitive",
-      enabled: 0,
-      title_template: "Will {streamer} win?",
-      outcome_a: "Win",
-      outcome_b: "Loss",
-      prediction_window: 120,
-      win_outcome: "A",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    },
-  ],
-  activeSession: null,
-  events: [],
-  developmentMode: false,
-};
-
-const liveSession: PredictionSession = {
-  id: 7,
-  twitch_user_id: "42",
-  status: "prediction_open",
-  twitch_prediction_id: "prediction-7",
-  outcome_a_label: "Win",
-  outcome_b_label: "Loss",
-  title: "Will test_streamer win?",
-  started_at: "2026-07-16T20:00:00Z",
-  resolved_at: null,
-  result: null,
-  channel_points_wagered: 0,
-  created_at: "2026-07-16T20:00:00Z",
-  updated_at: "2026-07-16T20:00:00Z",
-};
-
-async function openMore() {
-  fireEvent.click(await screen.findByText("More"));
+function renderDashboard(data: DashboardData | null = dashboard, error: string | null = null) {
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  render(<PredictionsDashboard data={data} error={error} refresh={refresh} />);
+  return refresh;
 }
 
-describe("prediction dashboard safeguards", () => {
-  beforeEach(() => {
-    vi.mocked(companionApi.getDashboard).mockResolvedValue(dashboard);
-    vi.mocked(companionApi.loadSettings).mockResolvedValue({
-      pollIntervalSeconds: 15,
-      monitoringEnabled: false,
+const withCompetitive = (enabled: boolean): DashboardData => ({
+  ...dashboard,
+  presets: [preset("competitive", enabled), preset("custom", false)],
+});
+
+describe("prediction presets", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows each preset's title with the streamer's login filled in", () => {
+    renderDashboard();
+
+    expect(screen.getAllByText("Will test_streamer win this match?")).toHaveLength(2);
+    expect(screen.queryByText(/\{streamer\}/)).toBeNull();
+  });
+
+  it("drops the enabled count and the kicker labels", () => {
+    renderDashboard();
+
+    expect(screen.queryByText(/\d\/2 enabled/)).toBeNull();
+    expect(screen.queryByText("Companion status")).toBeNull();
+    expect(screen.getByText("Competitive")).toBeVisible();
+    expect(screen.getByText("Custom")).toBeVisible();
+  });
+
+  it("toggles a preset from its row and saves it", async () => {
+    vi.mocked(companionApi.savePreset).mockResolvedValue(preset("custom", true));
+    const refresh = renderDashboard();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Custom preset" }));
+
+    expect(companionApi.savePreset).toHaveBeenCalledWith(
+      "custom",
+      expect.objectContaining({ enabled: true, titleTemplate: "Will {streamer} win this match?" }),
+    );
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("puts the switch back and says why when a toggle fails to save", async () => {
+    vi.mocked(companionApi.savePreset).mockRejectedValue("database is locked");
+    renderDashboard();
+
+    const toggle = screen.getByRole("checkbox", { name: "Custom preset" });
+    await userEvent.click(toggle);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("keeps the raw template in the editor, without a second toggle", async () => {
+    renderDashboard();
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit Competitive preset" }));
+
+    expect(screen.getByLabelText(/Prediction title/)).toHaveValue("Will {streamer} win this match?");
+    expect(screen.getByText("{streamer}")).toBeVisible();
+    // Only the other preset's row switch remains: the editor has no toggle of its own.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.queryByRole("checkbox", { name: "Competitive preset" })).toBeNull();
+    expect(screen.queryByText("Competitive mode")).toBeNull();
+  });
+
+  it("closes the editor on a good save and keeps it open on a failed one", async () => {
+    vi.mocked(companionApi.savePreset)
+      .mockRejectedValueOnce("offline")
+      .mockResolvedValueOnce(preset("competitive", true));
+    renderDashboard();
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit Competitive preset" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save preset" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("offline");
+    expect(screen.getByLabelText(/Prediction title/)).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save preset" }));
+    expect(await screen.findByText("Competitive preset saved.")).toBeVisible();
+    expect(screen.queryByLabelText(/Prediction title/)).toBeNull();
+  });
+});
+
+describe("test and activity", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("is collapsed, has no polling slider and no settings calls", async () => {
+    renderDashboard({ ...dashboard, events: [event(1, "prediction_created", "Opened")] });
+
+    expect(screen.getByText("Recent activity")).not.toBeVisible();
+    expect(screen.queryByRole("slider")).toBeNull();
+    await userEvent.click(screen.getByText("Test & activity"));
+    expect(screen.getByText("Recent activity")).toBeVisible();
+    expect(screen.queryByText(/polling/i)).toBeNull();
+  });
+
+  it("gives failed resolve/cancel actions a friendly title", async () => {
+    renderDashboard({
+      ...dashboard,
+      events: [event(2, "prediction_action_error", "Twitch said no")],
     });
-    vi.mocked(companionApi.saveSettings).mockResolvedValue({
-      pollIntervalSeconds: 25,
-      monitoringEnabled: false,
-    });
+    await userEvent.click(screen.getByText("Test & activity"));
+
+    expect(screen.getByText("Couldn't update prediction")).toBeVisible();
+    expect(screen.queryByText("prediction action error")).toBeNull();
+  });
+
+  it("shows event times relative, with the full date in the tooltip", async () => {
+    const recent = event(1, "prediction_created", "Opened");
+    renderDashboard({ ...dashboard, events: [recent] });
+    await userEvent.click(screen.getByText("Test & activity"));
+
+    const time = within(screen.getByRole("list")).getByText("5 min ago");
+    expect(time).toHaveAttribute("title", new Date(recent.created_at).toLocaleString());
   });
 
   it("does not offer a ready test action when Competitive is disabled", async () => {
-    render(<PredictionsDashboard />);
-    await openMore();
+    renderDashboard(withCompetitive(false));
+    await userEvent.click(screen.getByText("Test & activity"));
 
-    const button = await screen.findByRole("button", {
-      name: "Enable Competitive to test",
-    });
-    expect(button).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enable Competitive to test" })).toBeDisabled();
     expect(screen.getByText(/enable your Competitive preset/i)).toBeVisible();
   });
 
-  it("persists one settings value after a slider gesture", async () => {
-    render(<PredictionsDashboard />);
-    await openMore();
-    const slider = await screen.findByRole("slider", {
-      name: "Detection polling interval",
+  it("sends a test prediction and shows the result, which clears itself", async () => {
+    vi.mocked(companionApi.simulateMatchStart).mockResolvedValue({
+      ok: true,
+      action: "x",
+      message: "Test prediction sent.",
     });
+    const refresh = renderDashboard();
+    await userEvent.click(screen.getByText("Test & activity"));
 
-    fireEvent.change(slider, { target: { value: "20" } });
-    fireEvent.change(slider, { target: { value: "25" } });
-    expect(companionApi.saveSettings).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Send test prediction" }));
 
-    fireEvent.pointerUp(slider);
-    await waitFor(() => {
-      expect(companionApi.saveSettings).toHaveBeenCalledTimes(1);
-      expect(companionApi.saveSettings).toHaveBeenCalledWith(25);
-    });
+    expect(companionApi.simulateMatchStart).toHaveBeenCalledWith("competitive");
+    expect(await screen.findByRole("status")).toHaveTextContent("Test prediction sent.");
+    expect(refresh).toHaveBeenCalled();
   });
 
-  it("marks the draft value unsaved when persistence fails", async () => {
-    vi.mocked(companionApi.saveSettings).mockRejectedValue(new Error("disk full"));
-    render(<PredictionsDashboard />);
-    await openMore();
-    const slider = await screen.findByRole("slider", {
-      name: "Detection polling interval",
-    });
-
-    fireEvent.change(slider, { target: { value: "25" } });
-    fireEvent.pointerUp(slider);
-
-    expect(await screen.findByText(/25s not saved/i)).toBeVisible();
-    expect(slider).toHaveAttribute("aria-invalid", "true");
+  it("shows a failed load as an alert", () => {
+    renderDashboard(dashboard, "backend unavailable");
+    expect(screen.getByRole("alert")).toHaveTextContent("backend unavailable");
   });
 
-  it("does not render an empty current-prediction card", async () => {
-    render(<PredictionsDashboard />);
-
-    await screen.findByText("Prediction presets");
-    expect(screen.queryByText("Current prediction")).not.toBeInTheDocument();
-    expect(screen.queryByText("Waiting for a match")).not.toBeInTheDocument();
-  });
-
-  it("keeps live prediction resolution controls visible", async () => {
-    vi.mocked(companionApi.getDashboard).mockResolvedValue({
-      ...dashboard,
-      activeSession: liveSession,
-    });
-    render(<PredictionsDashboard />);
-
-    expect(await screen.findByText("Current prediction")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: /Resolve.*Win/i }),
-    ).toBeVisible();
-  });
-
-  it("keeps occasional tools inside More", async () => {
-    render(<PredictionsDashboard />);
-
-    const more = await screen.findByText("More");
-    expect(screen.getByText("Recent prediction activity")).not.toBeVisible();
-    fireEvent.click(more);
-    expect(screen.getByText("Recent prediction activity")).toBeVisible();
-    expect(
-      screen.getByRole("slider", { name: "Detection polling interval" }),
-    ).toBeVisible();
+  it("explains while the first load is pending or failed", () => {
+    const { unmount } = render(
+      <PredictionsDashboard data={null} error={null} refresh={vi.fn()} />,
+    );
+    expect(screen.getByText("Loading your presets…")).toBeVisible();
+    unmount();
+    render(<PredictionsDashboard data={null} error="nope" refresh={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("nope");
   });
 });

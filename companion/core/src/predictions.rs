@@ -400,7 +400,7 @@ impl PredictionService {
 
     fn log_action_error(&self, twitch_user_id: &str, session_id: i64, message: &str) -> Result<()> {
         self.db
-            .add_event(twitch_user_id, Some(session_id), "prediction_error", message)?;
+            .add_event(twitch_user_id, Some(session_id), "prediction_action_error", message)?;
         Ok(())
     }
 }
@@ -420,6 +420,7 @@ mod tests {
     #[derive(Default)]
     struct FakeTwitch {
         create_should_fail: bool,
+        cancel_should_fail: bool,
         refresh_called: AtomicBool,
         /// Refresh answers "sign in again".
         refresh_reauth: bool,
@@ -530,6 +531,13 @@ mod tests {
             _broadcaster_id: &str,
             _prediction_id: &str,
         ) -> TwitchResult<()> {
+            if self.cancel_should_fail {
+                return Err(TwitchError::Api {
+                    label: "Twitch API".into(),
+                    status: 400,
+                    message: "cannot cancel".into(),
+                });
+            }
             Ok(())
         }
     }
@@ -638,6 +646,24 @@ mod tests {
         assert_eq!(resolved.result.as_deref(), Some("outcome_a"));
         assert_eq!(resolved.channel_points_wagered, 2000);
         assert!(db.get_active_session("123").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_manual_cancel_logs_an_action_error_not_a_prediction_error() {
+        let (service, db) = setup(Arc::new(FakeTwitch {
+            cancel_should_fail: true,
+            ..Default::default()
+        }));
+        enable_competitive(&db);
+        service
+            .handle_match_start("123", "manual", "competitive")
+            .await
+            .unwrap();
+
+        assert!(service.cancel("123").await.is_err());
+        let events = db.get_recent_events("123", 5).unwrap();
+        assert_eq!(events[0].event_type, "prediction_action_error");
+        assert!(events.iter().all(|e| e.event_type != "prediction_error"));
     }
 
     #[tokio::test]

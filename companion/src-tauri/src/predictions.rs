@@ -24,7 +24,7 @@ use vap_core::db::{Db, Preset, PresetInput, SafeUser, UpsertUser};
 use vap_core::predictions::{PredictionService, Winner, REAUTH_REQUIRED_KEY};
 use vap_core::twitch::{TwitchClient, TwitchConfig};
 
-use crate::commands::{push_log, AppRuntimeState};
+use crate::commands::AppRuntimeState;
 use crate::hosted_auth;
 
 /// Fixed loopback port used only for the one-shot Twitch OAuth callback. The
@@ -200,9 +200,11 @@ pub fn get_twitch_settings(state: State<'_, AppRuntimeState>) -> Value {
 #[tauri::command]
 pub fn get_dashboard(state: State<'_, AppRuntimeState>) -> Result<Value, String> {
     let user = require_user(&state)?;
+    // Read-only: default presets are created when an account connects and,
+    // for older accounts, once at startup.
     let presets = state
         .db
-        .ensure_default_presets(&user.twitch_user_id)
+        .get_presets(&user.twitch_user_id)
         .map_err(|error| error.to_string())?;
     let active = state
         .db
@@ -241,11 +243,9 @@ pub fn save_twitch_credentials(
         .map_err(|_| "Could not save credentials.".to_string())?;
     let runtime = build_prediction_runtime(state.db.clone(), client_id, client_secret);
     *state.predictions.write().unwrap() = Some(runtime);
-    push_log(
-        &state.status,
-        "success",
-        "Twitch application credentials saved on this PC.",
-    );
+    state
+        .shared
+        .push_log("success", "Twitch application credentials saved on this PC.");
     Ok(json!({ "ok": true, "configured": true }))
 }
 
@@ -274,10 +274,12 @@ pub fn save_preset(
         prediction_window,
         win_outcome,
     )?;
-    state
+    let saved = state
         .db
         .save_preset(&user.twitch_user_id, &game_mode, input)
-        .map_err(|_| "Could not save preset.".to_string())
+        .map_err(|_| "Could not save preset.".to_string())?;
+    state.shared.emit_dashboard_changed();
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -292,11 +294,10 @@ pub async fn resolve_prediction(
         "B" => Winner::B,
         _ => return Err("Winner must be A or B.".into()),
     };
-    runtime
-        .service
-        .resolve(&user.twitch_user_id, winner)
-        .await
-        .map_err(|error| error.to_string())?;
+    let outcome = runtime.service.resolve(&user.twitch_user_id, winner).await;
+    // Resolve and cancel record an event even when Twitch rejects the call.
+    state.shared.emit_dashboard_changed();
+    outcome.map_err(|error| error.to_string())?;
     Ok(json!({ "ok": true, "message": "Prediction resolved." }))
 }
 
@@ -304,11 +305,9 @@ pub async fn resolve_prediction(
 pub async fn cancel_prediction(state: State<'_, AppRuntimeState>) -> Result<Value, String> {
     let user = require_user(&state)?;
     let runtime = current_runtime(&state)?;
-    runtime
-        .service
-        .cancel(&user.twitch_user_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let outcome = runtime.service.cancel(&user.twitch_user_id).await;
+    state.shared.emit_dashboard_changed();
+    outcome.map_err(|error| error.to_string())?;
     Ok(json!({ "ok": true, "message": "Prediction cancelled." }))
 }
 
@@ -321,12 +320,13 @@ pub async fn simulate_match_start(
 ) -> Result<Value, String> {
     let user = require_user(&state)?;
     let runtime = current_runtime(&state)?;
-    let result = runtime
+    let outcome = runtime
         .service
         .handle_match_start(&user.twitch_user_id, "manual", &game_mode)
-        .await
-        .map_err(|error| error.to_string())?;
-    push_log(&state.status, "info", &result.message);
+        .await;
+    state.shared.emit_dashboard_changed();
+    let result = outcome.map_err(|error| error.to_string())?;
+    state.shared.push_log("info", &result.message);
     Ok(json!({
         "ok": true,
         "action": result.action,
@@ -369,8 +369,7 @@ pub async fn connect_twitch(
     app.opener()
         .open_url(auth_url, None::<&str>)
         .map_err(|error| format!("Could not open your browser for Twitch sign-in: {error}"))?;
-    push_log(
-        &state.status,
+    state.shared.push_log(
         "info",
         "Opened Twitch sign-in in your browser. Waiting for authorization…",
     );
@@ -401,12 +400,40 @@ pub async fn connect_twitch(
         .map_err(|error| error.to_string())?;
     let _ = state.db.ensure_default_presets(&user.twitch_user_id);
     let _ = state.db.set_config(REAUTH_REQUIRED_KEY, "0");
-    push_log(
-        &state.status,
+    state.shared.push_log(
         "success",
         &format!("Connected to Twitch as {}.", user.twitch_login),
     );
+    state.shared.emit_dashboard_changed();
     Ok(user)
+}
+
+/// An open prediction would be stranded on Twitch if the tokens were removed.
+pub fn blocks_disconnect(active_session_status: Option<&str>) -> bool {
+    active_session_status == Some("prediction_open")
+}
+
+/// Sign out of Twitch: removes the stored tokens and account, keeps presets.
+#[tauri::command]
+pub fn disconnect_twitch(state: State<'_, AppRuntimeState>) -> Result<(), String> {
+    if let Some(user) = state.db.get_user().map_err(|error| error.to_string())? {
+        let open = state
+            .db
+            .get_active_session(&user.twitch_user_id)
+            .map_err(|error| error.to_string())?;
+        if blocks_disconnect(open.as_ref().map(|session| session.status.as_str())) {
+            return Err("Resolve or cancel the open prediction before disconnecting.".into());
+        }
+    }
+    state
+        .db
+        .disconnect_twitch()
+        .map_err(|_| "Could not disconnect Twitch.".to_string())?;
+    state
+        .shared
+        .push_log("info", "Disconnected from Twitch on this PC.");
+    state.shared.emit_dashboard_changed();
+    Ok(())
 }
 
 /// Accept a single loopback request, send a small "you can close this" page,
@@ -525,4 +552,16 @@ fn percent_decode(input: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::blocks_disconnect;
+
+    #[test]
+    fn only_an_open_prediction_blocks_disconnect() {
+        assert!(blocks_disconnect(Some("prediction_open")));
+        assert!(!blocks_disconnect(Some("creating")));
+        assert!(!blocks_disconnect(None));
+    }
 }

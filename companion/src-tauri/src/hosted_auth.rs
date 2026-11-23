@@ -9,7 +9,6 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use tauri::{AppHandle, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
@@ -18,8 +17,8 @@ use vap_core::connect;
 use vap_core::db::{Db, SafeUser};
 use vap_core::predictions::SessionHealth;
 
-use crate::commands::{push_log, AppRuntimeState};
-use crate::models::ValorantDetectionStatus;
+use crate::commands::AppRuntimeState;
+use crate::shared::Shared;
 use crate::predictions::{current_runtime, PredictionRuntime};
 
 /// ValorPredict's shared Twitch application (the Client ID is public by design).
@@ -69,8 +68,7 @@ pub fn start_hosted_login(
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|error| format!("Could not open your browser: {error}"))?;
-    push_log(
-        &state.status,
+    state.shared.push_log(
         "info",
         "Opened the Twitch sign-in page. Copy the connection code, then come back and paste it.",
     );
@@ -113,11 +111,11 @@ async fn redeem(state: &AppRuntimeState, code: &str) -> Result<SafeUser, String>
     let user = connect::import_connection_code(&runtime.twitch, &state.db, code)
         .await
         .map_err(|error| error.to_string())?;
-    push_log(
-        &state.status,
+    state.shared.push_log(
         "success",
         &format!("Connected to Twitch as {}.", user.twitch_login),
     );
+    state.shared.emit_dashboard_changed();
     Ok(user)
 }
 
@@ -126,12 +124,12 @@ async fn redeem(state: &AppRuntimeState, code: &str) -> Result<SafeUser, String>
 pub fn spawn_session_watchdog(
     predictions: Arc<RwLock<Option<PredictionRuntime>>>,
     db: Arc<Db>,
-    status: Arc<Mutex<ValorantDetectionStatus>>,
+    shared: Arc<Shared>,
 ) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(10)).await;
         loop {
-            check_once(&predictions, &db, &status).await;
+            check_once(&predictions, &db, &shared).await;
             tokio::time::sleep(VALIDATE_EVERY).await;
         }
     });
@@ -140,7 +138,7 @@ pub fn spawn_session_watchdog(
 async fn check_once(
     predictions: &Arc<RwLock<Option<PredictionRuntime>>>,
     db: &Arc<Db>,
-    status: &Arc<Mutex<ValorantDetectionStatus>>,
+    shared: &Shared,
 ) {
     let runtime = predictions.read().unwrap().clone();
     let Some(runtime) = runtime else { return };
@@ -153,14 +151,19 @@ async fn check_once(
     }
     match runtime.service.check_session().await {
         Ok(SessionHealth::Valid) => {}
-        Ok(SessionHealth::Refreshed) => push_log(status, "info", "Twitch connection refreshed."),
-        Ok(SessionHealth::ReauthRequired) => push_log(
-            status,
-            "warn",
-            "Your Twitch sign-in expired. Open ValorPredict and reconnect Twitch.",
-        ),
-        Err(error) => push_log(
-            status,
+        Ok(SessionHealth::Refreshed) => {
+            shared.push_log("info", "Twitch connection refreshed.");
+            // `check_session` clears the reauth flag on success.
+            shared.emit_dashboard_changed();
+        }
+        Ok(SessionHealth::ReauthRequired) => {
+            shared.push_log(
+                "warn",
+                "Your Twitch sign-in expired. Open ValorPredict and reconnect Twitch.",
+            );
+            shared.emit_dashboard_changed();
+        }
+        Err(error) => shared.push_log(
             "warn",
             &format!("Couldn't check your Twitch connection ({error}). Will retry in an hour."),
         ),

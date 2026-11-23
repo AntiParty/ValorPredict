@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
 import type { MeResponse } from "../../types";
-import { Brand } from "./Brand";
 import { ConnectStep } from "./ConnectStep";
 import { CreateAppStep } from "./CreateAppStep";
 import { CredentialsStep } from "./CredentialsStep";
@@ -31,79 +30,72 @@ export function OnboardingWizard({ me, onAdvance }: Props) {
 
   if (!advanced) {
     return (
-      <main className="companion-shell">
-        <section className="card wizard-card">
-          <Brand />
-          <HostedConnectStep
-            onConnected={onAdvance}
-            onUseOwnApp={() => {
-              setStep("create");
-              setAdvanced(true);
-            }}
-          />
-        </section>
-      </main>
+      <section className="wizard-card">
+        <HostedConnectStep
+          onConnected={onAdvance}
+          onUseOwnApp={() => {
+            setStep("create");
+            setAdvanced(true);
+          }}
+        />
+      </section>
     );
   }
 
   return (
-    <main className="companion-shell">
-      <section className="card wizard-card">
-        <Brand />
+    <section className="wizard-card">
+      <ol className="wizard-steps" aria-label="Setup progress">
+        {STEPS.map((label, index) => (
+          <li
+            key={label}
+            className={
+              index === stepIndex ? "current" : index < stepIndex ? "done" : ""
+            }
+            aria-current={index === stepIndex ? "step" : undefined}
+          >
+            <span className="wizard-steps__dot">{index < stepIndex ? "✓" : index + 1}</span>
+            <span className="wizard-steps__label">{label}</span>
+          </li>
+        ))}
+      </ol>
 
-        <ol className="wizard-steps" aria-label="Setup progress">
-          {STEPS.map((label, index) => (
-            <li
-              key={label}
-              className={
-                index === stepIndex ? "current" : index < stepIndex ? "done" : ""
-              }
-              aria-current={index === stepIndex ? "step" : undefined}
-            >
-              <span className="wizard-steps__dot">{index < stepIndex ? "✓" : index + 1}</span>
-              <span className="wizard-steps__label">{label}</span>
-            </li>
-          ))}
-        </ol>
+      {step === "create" && (
+        <CreateAppStep
+          redirectUri={me.redirectUri}
+          onContinue={() => setStep("credentials")}
+        />
+      )}
+      {step === "credentials" && (
+        <CredentialsStep
+          redirectUri={me.redirectUri}
+          onBack={() => {
+            setEditingCredentials(false);
+            setStep(ownConfigured ? "connect" : "create");
+          }}
+          onSaved={() => {
+            setEditingCredentials(false);
+            setStep("connect");
+            onAdvance();
+          }}
+        />
+      )}
+      {step === "connect" && (
+        <ConnectStep
+          onConnected={onAdvance}
+          onEditCredentials={() => {
+            setEditingCredentials(true);
+            setStep("credentials");
+          }}
+        />
+      )}
 
-        {step === "create" && (
-          <CreateAppStep
-            redirectUri={me.redirectUri}
-            onContinue={() => setStep("credentials")}
-          />
-        )}
-        {step === "credentials" && (
-          <CredentialsStep
-            redirectUri={me.redirectUri}
-            onBack={() => {
-              setEditingCredentials(false);
-              setStep(ownConfigured ? "connect" : "create");
-            }}
-            onSaved={() => {
-              setEditingCredentials(false);
-              setStep("connect");
-              onAdvance();
-            }}
-          />
-        )}
-        {step === "connect" && (
-          <ConnectStep
-            onConnected={onAdvance}
-            onEditCredentials={() => {
-              setEditingCredentials(true);
-              setStep("credentials");
-            }}
-          />
-        )}
-
-        {me.hostedAvailable && !ownConfigured && (
-          <p className="field-note">
-            <button className="link-button" type="button" onClick={() => setAdvanced(false)}>
-              ← Back to simple sign-in
-            </button>
-          </p>
-        )}
-      </section>
-    </main>
+      {me.hostedAvailable && !ownConfigured && (
+        <p className="field-note">
+          <button className="link-button" type="button" onClick={() => setAdvanced(false)}>
+            ← Back to simple sign-in
+          </button>
+        </p>
+      )}
+    </section>
   );
 }

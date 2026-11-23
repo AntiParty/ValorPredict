@@ -24,12 +24,7 @@ export function CreateAppStep({ redirectUri, onContinue }: Props) {
 
   return (
     <div className="wizard-step">
-      <div className="preset-head">
-        <div>
-          <span className="card-kicker">Step 1</span>
-          <h3>Create your Twitch app</h3>
-        </div>
-      </div>
+      <h3>Create your Twitch app</h3>
       <p className="muted-line">
         Open the Twitch Developer Console and register an application. Use these
         settings when Twitch asks:

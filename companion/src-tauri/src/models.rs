@@ -4,6 +4,10 @@ pub const DEFAULT_POLL_INTERVAL_SECONDS: u64 = 15;
 pub const MIN_POLL_INTERVAL_SECONDS: u64 = 10;
 pub const MAX_POLL_INTERVAL_SECONDS: u64 = 60;
 
+fn default_poll_interval_seconds() -> u64 {
+    DEFAULT_POLL_INTERVAL_SECONDS
+}
+
 pub fn clamp_poll_interval(seconds: u64) -> u64 {
     seconds.clamp(MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS)
 }
@@ -11,6 +15,9 @@ pub fn clamp_poll_interval(seconds: u64) -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    /// No longer used: poll timing is automatic (`next_poll_delay`). Kept so
+    /// settings.json files written by older versions still load.
+    #[serde(default = "default_poll_interval_seconds")]
     pub poll_interval_seconds: u64,
     #[serde(default)]
     pub monitoring_enabled: bool,
@@ -91,7 +98,6 @@ pub struct ValorantDetectionStatus {
     pub cooldown_remaining_seconds: u64,
     pub last_backend_response: String,
     pub monitoring: bool,
-    pub logs: Vec<LogEntry>,
 }
 
 impl Default for ValorantDetectionStatus {
@@ -109,7 +115,6 @@ impl Default for ValorantDetectionStatus {
             cooldown_remaining_seconds: 0,
             last_backend_response: "No prediction activity yet.".into(),
             monitoring: false,
-            logs: Vec::new(),
         }
     }
 }

@@ -31,7 +31,9 @@ This section exists so anyone — including anti-cheat engineers — can verify
 exactly what the app touches without reading the whole tree first. Every step
 below maps to a specific source file.
 
-The desktop app polls, on a timer, using **only** these inputs:
+The desktop app polls on an automatic, state-based timer (every 5 to 20
+seconds; the fastest while you are in agent select). It does nothing beyond the
+process check unless VALORANT itself is running, and uses **only** these inputs:
 
 1. **Process list** — checks whether `RiotClientServices.exe` and
    `VALORANT-Win64-Shipping.exe` are running, via the `sysinfo` crate. Nothing
@@ -48,7 +50,9 @@ The desktop app polls, on a timer, using **only** these inputs:
 3. **Local loopback API** — makes authenticated **HTTP GET** requests to
    `https://127.0.0.1:<port>` (the local endpoints the Riot Client exposes on
    the loopback interface) to obtain the session's entitlement token, PUUID, and
-   region/shard — the same endpoints the client uses for its own UI.
+   region/shard — the same endpoints the client uses for its own UI. They are
+   read once per Riot session (and again when Riot asks for fresh tokens or
+   after 30 minutes), not on every poll.
    → [`riot_local_client.rs`](companion/src-tauri/src/riot_local_client.rs) (`local_json`)
 
 4. **Riot-owned match-state endpoints** — with those tokens, makes read-only
@@ -60,7 +64,8 @@ The desktop app polls, on a timer, using **only** these inputs:
    → [`riot_local_client.rs`](companion/src-tauri/src/riot_local_client.rs) (`glz_json`, `get_match_result`)
 
 5. **Log file (read-only fallback)** — if region/shard/version can't be resolved
-   from the API, it reads `VALORANT\Saved\Logs\ShooterGame.log` to parse them.
+   from the API, it reads `VALORANT\Saved\Logs\ShooterGame.log` to parse them,
+   once per Riot session.
    → [`riot_local_client.rs`](companion/src-tauri/src/riot_local_client.rs) (`read_shooter_game_log`)
 
 The detection loop turns those signals into a state (`PreGame`, `CurrentGame`,

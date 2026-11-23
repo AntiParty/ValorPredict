@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { companionApi } from "../../api";
+import { Notice } from "../Notice";
 
 interface Props {
   onConnected: () => void;
@@ -26,12 +27,7 @@ export function ConnectStep({ onConnected, onEditCredentials }: Props) {
 
   return (
     <div className="wizard-step">
-      <div className="preset-head">
-        <div>
-          <span className="card-kicker">Step 3</span>
-          <h3>Connect your Twitch account</h3>
-        </div>
-      </div>
+      <h3>Connect your Twitch account</h3>
       <p className="muted-line">
         Authorize prediction management so the companion can open and resolve
         Channel Points Predictions automatically. Twitch Predictions require an
@@ -41,7 +37,7 @@ export function ConnectStep({ onConnected, onEditCredentials }: Props) {
         Your browser will open for sign-in. When Twitch confirms the connection,
         close that tab and return to ValorPredict.
       </p>
-      {error && <div className="pred-notice error">{error}</div>}
+      <Notice notice={error ? { kind: "error", message: error } : null} />
       <div className="wizard-actions">
         <button
           className="button ghost"

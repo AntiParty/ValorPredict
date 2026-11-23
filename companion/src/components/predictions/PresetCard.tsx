@@ -1,14 +1,20 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import { renderTitle } from "../../format";
+import { useNotice } from "../../hooks/useNotice";
 import type { AutoPredictionPreset, PresetInput } from "../../types";
+import { Notice } from "../Notice";
 
 interface Props {
   preset: AutoPredictionPreset;
+  /** The streamer's Twitch login, shown in place of `{streamer}`. */
+  login: string;
   busy: boolean;
-  onSave: (input: PresetInput) => void;
+  /** Rejects when the save fails, so the editor can stay open and say why. */
+  onSave: (input: PresetInput) => Promise<void>;
 }
 
-export function PresetCard({ preset, busy, onSave }: Props) {
+export function PresetCard({ preset, login, busy, onSave }: Props) {
   const label = preset.game_mode === "competitive" ? "Competitive" : "Custom";
 
   const [editing, setEditing] = useState(false);
@@ -20,6 +26,7 @@ export function PresetCard({ preset, busy, onSave }: Props) {
   const [winOutcome, setWinOutcome] = useState<"A" | "B">(
     preset.win_outcome === "B" ? "B" : "A",
   );
+  const { notice, showSuccess, showError, clear } = useNotice();
 
   // Sync from the server only while not mid-edit, so a background refresh can't
   // clobber what the user is typing.
@@ -42,60 +49,67 @@ export function PresetCard({ preset, busy, onSave }: Props) {
     winOutcome,
   });
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSave(currentInput());
-    setEditing(false);
+    clear();
+    try {
+      await onSave(currentInput());
+      setEditing(false);
+      showSuccess(`${label} preset saved.`);
+    } catch (error) {
+      showError(String(error));
+    }
   }
 
-  // Toggle on/off straight from the collapsed row — the common daily action —
-  // without opening the form.
-  function toggleEnabled(next: boolean) {
+  // Toggle on/off straight from the collapsed row (the common daily action)
+  // without opening the form. A failed save puts the switch back.
+  async function toggleEnabled(next: boolean) {
+    clear();
     setEnabled(next);
-    onSave({ ...currentInput(), enabled: next });
+    try {
+      await onSave({ ...currentInput(), enabled: next });
+    } catch (error) {
+      setEnabled(!next);
+      showError(String(error));
+    }
   }
 
   if (!editing) {
     return (
-      <div className={`preset-row ${enabled ? "is-on" : ""}`}>
-        <div className="preset-row__main">
-          <span className="card-kicker">{label}</span>
-          <strong className="preset-row__title">{titleTemplate}</strong>
+      <div className="preset-item">
+        <div className={`preset-row ${enabled ? "is-on" : ""}`}>
+          <strong className="preset-row__label">{label}</strong>
+          <span className="preset-row__title" title={renderTitle(titleTemplate, login)}>
+            {renderTitle(titleTemplate, login)}
+          </span>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              aria-label={`${label} preset`}
+              checked={enabled}
+              disabled={busy}
+              onChange={(event) => void toggleEnabled(event.target.checked)}
+            />
+            <span aria-hidden="true" />
+            <strong>{enabled ? "On" : "Off"}</strong>
+          </label>
+          <button
+            type="button"
+            className="button ghost"
+            aria-label={`Edit ${label} preset`}
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </button>
         </div>
-        <label className="toggle" title={enabled ? "Enabled" : "Disabled"}>
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={busy}
-            onChange={(event) => toggleEnabled(event.target.checked)}
-          />
-          <span aria-hidden="true" />
-          <strong>{enabled ? "On" : "Off"}</strong>
-        </label>
-        <button type="button" className="button ghost" onClick={() => setEditing(true)}>
-          Edit
-        </button>
+        <Notice notice={notice} />
       </div>
     );
   }
 
   return (
-    <form className="card preset-card" onSubmit={handleSubmit}>
-      <div className="preset-head">
-        <div>
-          <span className="card-kicker">{label} mode</span>
-          <h3>{label} Preset</h3>
-        </div>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(event) => setEnabled(event.target.checked)}
-          />
-          <span aria-hidden="true" />
-          <strong>{enabled ? "On" : "Off"}</strong>
-        </label>
-      </div>
+    <form className="card preset-card" onSubmit={(event) => void handleSubmit(event)}>
+      <h3>{label} preset</h3>
 
       <label className="field">
         <span>Prediction title</span>
@@ -159,6 +173,7 @@ export function PresetCard({ preset, busy, onSave }: Props) {
         <small>When the match ends, the companion resolves to this side if you won, the other side if you lost.</small>
       </label>
 
+      <Notice notice={notice} />
       <div className="preset-actions">
         <button
           type="button"

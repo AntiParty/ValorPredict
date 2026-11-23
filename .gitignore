@@ -31,3 +31,5 @@ Thumbs.db
 /companion/src-tauri/target-codex
 /docs/superpowers
 /.worktrees/
+/founder
+/companion/src-tauri/target-ci

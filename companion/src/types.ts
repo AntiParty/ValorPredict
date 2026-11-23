@@ -8,11 +8,6 @@ export type ValorantLocalState =
 
 export type ValorantGameMode = "competitive" | "custom" | "unknown";
 
-export interface SettingsView {
-  pollIntervalSeconds: number;
-  monitoringEnabled: boolean;
-}
-
 export interface BackendResponse {
   ok: boolean;
   action: string;
@@ -38,7 +33,15 @@ export interface DetectionStatus {
   cooldownRemainingSeconds: number;
   lastBackendResponse: string;
   monitoring: boolean;
-  logs: LogEntry[];
+}
+
+/** Dev-only detection counters (the backend always reports them). */
+export interface DetectionMetrics {
+  lastPollMs: number | null;
+  loopbackCallsLastMinute: number;
+  riotServerCallsLastMinute: number;
+  logReadsLastMinute: number;
+  processScansLastMinute: number;
 }
 
 // --- Predictions (ported from the website, served locally by the Rust core) ---
